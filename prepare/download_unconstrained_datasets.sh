@@ -5,7 +5,7 @@ echo "The datasets will be stored in the 'dataset' folder\n"
 
 # HumanAct12 poses
 echo "Downloading the HumanAct12 poses dataset"
-gdown "https://drive.google.com/uc?id=1130gHSvNyJmii7f6pv5aY5IyQIWc3t7R"
+gdown "https://drive.google.com/uc?id=1130gHSvNyJmii7f6pv5aY5IyQIWc3t7R&confirm=t"
 echo "Extracting the HumanAct12 poses dataset"
 tar xfzv HumanAct12Poses.tar.gz
 echo "Cleaning\n"

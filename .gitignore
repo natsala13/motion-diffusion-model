@@ -1,3 +1,11 @@
+dataset/HumanML3D
+dataset/HumanAct12Poses/
+dataset/humanact12_unconstrained_modi_struct.npy
+body_models/smpl/
+kit/
+glove/
+t2m/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
