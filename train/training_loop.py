@@ -132,7 +132,8 @@ class TrainLoop:
                 if not (not self.lr_anneal_steps or self.step + self.resume_step < self.lr_anneal_steps):
                     break
 
-                motion = motion.to(self.device)
+                motion = motion.to(self.device)  # (batch, ch , ? , time), humanml: (64, 263, 1, 196)
+                # import ipdb;ipdb.set_trace()
                 cond['y'] = {key: val.to(self.device) if torch.is_tensor(val) else val for key, val in cond['y'].items()}
 
                 self.run_step(motion, cond)
@@ -167,6 +168,9 @@ class TrainLoop:
         if not self.args.eval_during_training:
             return
         start_eval = time.time()
+
+        import ipdb;ipdb.set_trace()
+
         if self.eval_wrapper is not None:
             print('Running evaluation loop: [Should take about 90 min]')
             log_file = os.path.join(self.save_dir, f'eval_humanml_{(self.step + self.resume_step):09d}.log')
@@ -228,7 +232,8 @@ class TrainLoop:
                 model_kwargs=micro_cond,
                 dataset=self.data.dataset
             )
-
+            
+            # import ipdb;ipdb.set_trace()
             if last_batch or not self.use_ddp:
                 losses = compute_losses()
             else:

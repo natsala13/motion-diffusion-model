@@ -117,7 +117,7 @@ class SpacedDiffusion(GaussianDiffusion):
 class _WrappedModel:
     def __init__(self, model, timestep_map, rescale_timesteps, original_num_steps):
         self.model = model
-        self.timestep_map = timestep_map
+        self.timestep_map = timestep_map  # TODO: In MDM, does nothing, just the identity translation, probably wasteso
         self.rescale_timesteps = rescale_timesteps
         self.original_num_steps = original_num_steps
 
