@@ -191,8 +191,8 @@ class MDM(nn.Module):
 
 
     def _apply(self, fn):
-        super()._apply(fn)
         self.rot2xyz.smpl_model._apply(fn)
+        return super()._apply(fn)
 
 
     def train(self, *args, **kwargs):
