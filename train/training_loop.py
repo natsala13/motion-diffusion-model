@@ -98,7 +98,6 @@ class TrainLoop:
                 )
             }
         self.use_ddp = False
-        self.ddp_model = self.model
 
     def _load_and_sync_parameters(self):
         resume_checkpoint = find_resume_checkpoint() or self.resume_checkpoint
@@ -106,11 +105,8 @@ class TrainLoop:
         if resume_checkpoint:
             self.resume_step = parse_resume_step_from_filename(resume_checkpoint)
             logger.log(f"loading model from checkpoint: {resume_checkpoint}...")
-            self.model.load_state_dict(
-                dist_util.load_state_dict(
-                    resume_checkpoint, map_location=dist_util.dev()
-                )
-            )
+            state_dict = dist_util.load_state_dict(resume_checkpoint, map_location=dist_util.dev())
+            self.model.load_state_dict(state_dict, strict=False)  # Due to Clip's weight that are not saved in checkpoint.
 
     def _load_optimizer_state(self):
         main_checkpoint = find_resume_checkpoint() or self.resume_checkpoint
@@ -133,11 +129,11 @@ class TrainLoop:
                     break
 
                 motion = motion.to(self.device)  # (batch, ch , ? , time), humanml: (64, 263, 1, 196)
-                # import ipdb;ipdb.set_trace()
                 cond['y'] = {key: val.to(self.device) if torch.is_tensor(val) else val for key, val in cond['y'].items()}
 
                 self.run_step(motion, cond)
-                if self.step % self.log_interval == 0:
+                
+                if self.step % self.log_interval == 0:  # log_interval: 1000, size(data): 10k, data/batch_size = ~150, --> log every +-6 epochs
                     for k,v in logger.get_current().name2val.items():
                         if k == 'loss':
                             print('step[{}]: loss[{:0.5f}]'.format(self.step+self.resume_step, v))
@@ -157,6 +153,7 @@ class TrainLoop:
                     if os.environ.get("DIFFUSION_TRAINING_TEST", "") and self.step > 0:
                         return
                 self.step += 1
+
             if not (not self.lr_anneal_steps or self.step + self.resume_step < self.lr_anneal_steps):
                 break
         # Save the last checkpoint if it wasn't already saved.
@@ -215,41 +212,43 @@ class TrainLoop:
 
     def forward_backward(self, batch, cond):
         self.mp_trainer.zero_grad()
-        for i in range(0, batch.shape[0], self.microbatch):
-            # Eliminates the microbatch feature
-            assert i == 0
-            assert self.microbatch == self.batch_size
-            micro = batch
-            micro_cond = cond
-            last_batch = (i + self.microbatch) >= batch.shape[0]
-            t, weights = self.schedule_sampler.sample(micro.shape[0], dist_util.dev())
+        # for i in range(0, batch.shape[0], self.microbatch):  # TODO: Deprecated - doesn't do anything.
+        # # Eliminates the microbatch feature
+        # assert i == 0
+        # assert self.microbatch == self.batch_size
+        # micro = batch
+        # micro_cond = cond
+        # last_batch = self.batch_size >= batch.shape[0]
 
-            compute_losses = functools.partial(
-                self.diffusion.training_losses,
-                self.ddp_model,
-                micro,  # [bs, ch, image_size, image_size]
-                t,  # [bs](int) sampled timesteps
-                model_kwargs=micro_cond,
-                dataset=self.data.dataset
+        t, weights = self.schedule_sampler.sample(batch.shape[0], dist_util.dev())
+
+        compute_losses = functools.partial(
+            self.diffusion.training_losses,
+            self.model,
+            batch,  # [bs, ch, image_size, image_size]
+            t,  # [bs](int) sampled timesteps
+            model_kwargs=cond,
+            dataset=self.data.dataset
+        )
+        
+        # import ipdb;ipdb.set_trace()
+        losses = compute_losses()
+        # if last_batch or not self.use_ddp:  # self.use_ddp is set to False Hard codded.
+        #     losses = compute_losses()
+        # else:
+        #     with self.model.no_sync():
+        #         losses = compute_losses()
+
+        if isinstance(self.schedule_sampler, LossAwareSampler):
+            self.schedule_sampler.update_with_local_losses(
+                t, losses["loss"].detach()
             )
-            
-            # import ipdb;ipdb.set_trace()
-            if last_batch or not self.use_ddp:
-                losses = compute_losses()
-            else:
-                with self.ddp_model.no_sync():
-                    losses = compute_losses()
 
-            if isinstance(self.schedule_sampler, LossAwareSampler):
-                self.schedule_sampler.update_with_local_losses(
-                    t, losses["loss"].detach()
-                )
-
-            loss = (losses["loss"] * weights).mean()
-            log_loss_dict(
-                self.diffusion, t, {k: v * weights for k, v in losses.items()}
-            )
-            self.mp_trainer.backward(loss)
+        loss = (losses["loss"] * weights).mean()
+        log_loss_dict(
+            self.diffusion, t, {k: v * weights for k, v in losses.items()}
+        )
+        self.mp_trainer.backward(loss)
 
     def _anneal_lr(self):
         if not self.lr_anneal_steps:

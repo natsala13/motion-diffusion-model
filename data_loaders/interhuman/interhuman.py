@@ -55,7 +55,7 @@ class InterHumanDataset(data.Dataset):
 
         index = 0
         for root, dirs, files in os.walk(pjoin(datapath, 'motions_processed')):
-            for file in tqdm(files):
+            for file in tqdm(files[:500]):
                 if file.endswith(".npy") and "person1" in root:
                     motion_name = file.split(".")[0]
                     if file.split(".")[0]+"\n" in ignore_list: # or int(motion_name)>1000
@@ -193,5 +193,14 @@ def interhuman_collate(batch):
         'inp': torch.tensor(b[2].T).float().unsqueeze(1), # [seqlen, J] -> [J, 1, seqlen]
         'text': b[1],
         'lengths': b[4],
+    } for b in batch]
+    return collate(adapted_batch)
+
+def interhuman_couple_collate(batch):
+    adapted_batch = [{
+        'inp': torch.tensor(np.concatenate((b[2], b[3]), axis=1).T).float().unsqueeze(1), # [seqlen, J] -> [J, 1, seqlen]
+        'text': b[1],
+        'lengths': b[4],
+        'tokens': b[1]  # For compatability reasons
     } for b in batch]
     return collate(adapted_batch)

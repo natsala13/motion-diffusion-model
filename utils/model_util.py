@@ -22,7 +22,7 @@ def get_model_args(args, data):
     clip_version = 'ViT-B/32'
     action_emb = 'tensor'
     cond_mode = get_cond_mode(args)
-    if hasattr(data.dataset, 'num_actions'):
+    if data and hasattr(data.dataset, 'num_actions'):
         num_actions = data.dataset.num_actions
     else:
         num_actions = 1
@@ -42,7 +42,7 @@ def get_model_args(args, data):
         nfeats = 1
     elif args.dataset == 'interhuman':
         data_rep = 'interhuman'
-        njoints = 262
+        njoints = 262 * 2
         nfeats = 1
 
 

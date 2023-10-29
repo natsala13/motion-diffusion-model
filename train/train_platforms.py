@@ -1,7 +1,8 @@
 import os
+import wandb
 
 class TrainPlatform:
-    def __init__(self, save_dir):
+    def __init__(self, save_dir, *args, **kwargs):
         pass
 
     def report_scalar(self, name, value, iteration, group_name=None):
@@ -15,7 +16,7 @@ class TrainPlatform:
 
 
 class ClearmlPlatform(TrainPlatform):
-    def __init__(self, save_dir):
+    def __init__(self, save_dir, *args, **kwargs):
         from clearml import Task
         path, name = os.path.split(save_dir)
         self.task = Task.init(project_name='motion_diffusion',
@@ -34,7 +35,7 @@ class ClearmlPlatform(TrainPlatform):
 
 
 class TensorboardPlatform(TrainPlatform):
-    def __init__(self, save_dir):
+    def __init__(self, save_dir, *args, **kwargs):
         from torch.utils.tensorboard import SummaryWriter
         self.writer = SummaryWriter(log_dir=save_dir)
 
@@ -46,7 +47,38 @@ class TensorboardPlatform(TrainPlatform):
 
 
 class NoPlatform(TrainPlatform):
-    def __init__(self, save_dir):
+    pass
+
+class WandBPlatform(TrainPlatform):
+    def __init__(self, save_dir, experiment_name='mdm couple experiment', **config):
+        super().__init__(save_dir)
+        wandb.init(
+                # Set the project where this run will be logged
+                project='mdm', 
+                # We pass a run name (otherwise it’ll be randomly assigned, like sunshine-lollypop-10)
+                name=experiment_name,
+                resume=True,
+                # Track hyperparameters and run metadata
+                config=config)
+
+    def report_scalar(self, name, value, iteration, group_name=None):
+        wandb.log({name: value})
+
+    def report_args(self, args, name):
         pass
+        # api = wandb.Api()
+
+        # # Access attributes directly from the run object 
+        # # or from the W&B App 
+        # username = wandb.run.entity
+        # project = wandb.run.project
+        # run_id = wandb.run.id
+
+        # run = api.run(f"{username}/{project}/{run_id}")
+        # run.config["bar"] = 32
+        # run.update()
 
 
+
+    def close(self):
+        wandb.finish()

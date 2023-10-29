@@ -11,13 +11,14 @@ from utils import dist_util
 from train.training_loop import TrainLoop
 from data_loaders.get_data import get_dataset_loader
 from utils.model_util import create_model_and_diffusion
-from train.train_platforms import ClearmlPlatform, TensorboardPlatform, NoPlatform  # required for the eval operation
+from train.train_platforms import ClearmlPlatform, TensorboardPlatform, NoPlatform, WandBPlatform  # required for the eval operation
 
 def main():
     args = train_args()
     fixseed(args.seed)
     train_platform_type = eval(args.train_platform_type)
-    train_platform = train_platform_type(args.save_dir)
+    train_platform = train_platform_type(args.save_dir, experiment_name=args.experiment_name,
+                                         lr=args.lr, batch_size=args.batch_size)
     train_platform.report_args(args, name='Args')
 
     if args.save_dir is None:

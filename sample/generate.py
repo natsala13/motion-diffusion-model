@@ -14,7 +14,7 @@ from model.cfg_sampler import ClassifierFreeSampleModel
 from data_loaders.get_data import get_dataset_loader
 from data_loaders.humanml.scripts.motion_process import recover_from_ric
 import data_loaders.humanml.utils.paramUtil as paramUtil
-from data_loaders.humanml.utils.plot_script import plot_3d_motion
+from data_loaders.humanml.utils.plot_script import plot_3d_motion, plot_3d_motion_interaction
 import shutil
 from data_loaders.tensors import collate
 
@@ -25,7 +25,7 @@ def main():
     out_path = args.output_dir
     name = os.path.basename(os.path.dirname(args.model_path))
     niter = os.path.basename(args.model_path).replace('model', '').replace('.pt', '')
-    max_frames = 196 if args.dataset in ['kit', 'humanml'] else 60
+    max_frames = 196 if args.dataset in ['kit', 'humanml'] else 210
     fps = 12.5 if args.dataset == 'kit' else 20
     n_frames = min(max_frames, int(args.motion_length*fps))
     is_using_data = not any([args.input_text, args.text_prompt, args.action_file, args.action_name])
@@ -67,11 +67,11 @@ def main():
     args.batch_size = args.num_samples  # Sampling a single batch from the testset, with exactly args.num_samples
 
     print('Loading dataset...')
-    data = load_dataset(args, max_frames, n_frames)
+    # data = load_dataset(args, max_frames, n_frames)
     total_num_samples = args.num_samples * args.num_repetitions
 
     print("Creating model and diffusion...")
-    model, diffusion = create_model_and_diffusion(args, data)
+    model, diffusion = create_model_and_diffusion(args, None) # TODO: We don't really needs data just data.dataset.num_actions if existing.
 
     print(f"Loading checkpoints from [{args.model_path}]...")
     state_dict = torch.load(args.model_path, map_location='cpu')
@@ -83,7 +83,7 @@ def main():
     model.eval()  # disable random masking
 
     if is_using_data:
-        iterator = iter(data)
+        iterator = iter(data)  # TODO: Im not sure whats happening here but worst case load data in here.
         _, model_kwargs = next(iterator)
     else:
         collate_args = [{'inp': torch.zeros(n_frames), 'tokens': None, 'lengths': n_frames}] * args.num_samples
@@ -126,17 +126,23 @@ def main():
             const_noise=False,
         )
 
-        import ipdb;ipdb.set_trace()  # 263 - vel, 
+        # import ipdb;ipdb.set_trace()  # 263 - vel, 
         # Recover XYZ *positions* from HumanML3D vector representation
         if model.data_rep == 'hml_vec':
             n_joints = 22 if sample.shape[1] == 263 else 21
             sample = data.dataset.t2m_dataset.inv_transform(sample.cpu().permute(0, 2, 3, 1)).float()
             sample = recover_from_ric(sample, n_joints)
-            sample = sample.view(-1, *sample.shape[2:]).permute(0, 2, 3, 1)
+            sample = sample.view(-1, *sample.shape[2:]).permute(0, 2, 3, 1)  # torch.Size([1, 22, 3, 196])
+        elif model.data_rep == 'interhuman':
+            n_joints = 22
+            xyz_features = 3
+            # import ipdb;ipdb.set_trace()
+            sample = sample.reshape(args.batch_size, 2, -1, max_frames)
+            sample = sample[..., :n_joints * xyz_features, :]
 
-        rot2xyz_pose_rep = 'xyz' if model.data_rep in ['xyz', 'hml_vec'] else model.data_rep
+        rot2xyz_pose_rep = 'xyz' if model.data_rep in ['xyz', 'hml_vec', 'interhuman']  else model.data_rep
         rot2xyz_mask = None if rot2xyz_pose_rep == 'xyz' else model_kwargs['y']['mask'].reshape(args.batch_size, n_frames).bool()
-        import ipdb;ipdb.set_trace()
+        # import ipdb;ipdb.set_trace()
         sample = model.rot2xyz(x=sample, mask=rot2xyz_mask, pose_rep=rot2xyz_pose_rep, glob=True, translation=True,
                                jointstype='smpl', vertstrans=True, betas=None, beta=0, glob_rot=None,
                                get_rotations_back=False)
@@ -190,13 +196,17 @@ def main():
             save_file = sample_file_template.format(sample_i, rep_i)
             print(sample_print_template.format(caption, sample_i, rep_i, save_file))
             animation_save_path = os.path.join(out_path, save_file)
-            plot_3d_motion(animation_save_path, skeleton, motion, dataset=args.dataset, title=caption, fps=fps)
+            if args.dataset == 'interhuman':
+                motion = motion.transpose(1, 0, 2).reshape(2, length, n_joints, xyz_features)
+                plot_3d_motion_interaction(animation_save_path, skeleton, motion, title=caption, fps=fps)    
+            else:
+                plot_3d_motion(animation_save_path, skeleton, motion, dataset=args.dataset, title=caption, fps=fps)
             # Credit for visualization: https://github.com/EricGuo5513/text-to-motion
             rep_files.append(animation_save_path)
 
-        sample_files = save_multiple_samples(args, out_path,
-                                               row_print_template, all_print_template, row_file_template, all_file_template,
-                                               caption, num_samples_in_out_file, rep_files, sample_files, sample_i)
+        # sample_files = save_multiple_samples(args, out_path,
+        #                                        row_print_template, all_print_template, row_file_template, all_file_template,
+        #                                        caption, num_samples_in_out_file, rep_files, sample_files, sample_i)
 
     abs_path = os.path.abspath(out_path)
     print(f'[Done] Results are at [{abs_path}]')
@@ -257,5 +267,13 @@ def load_dataset(args, max_frames, n_frames):
     return data
 
 
+def debug_ffmpeg():
+    skeleton = paramUtil.t2m_kinematic_chain
+    # motion = np.load('../debug_interaction.npy')
+    for file in ['mdm', 'intergen']:
+        motion = np.load(f'debug/{file}.npy')
+        plot_3d_motion_interaction(f'save/debug_{file}.mp4', skeleton, motion, title='debug', fps=20)    
+
 if __name__ == "__main__":
+    # debug_ffmpeg()
     main()
