@@ -174,6 +174,7 @@ class CompMDMGeneratedDataset(Dataset):
 
 
         with torch.no_grad():
+            print(f'Generating now {len(dataloader)} motions...')
             for i, (motion, model_kwargs) in tqdm(enumerate(dataloader)):
 
                 if num_samples_limit is not None and len(generated_motion) >= num_samples_limit:
@@ -194,12 +195,13 @@ class CompMDMGeneratedDataset(Dataset):
 
                     sample = sample_fn(
                         model,
+                        # [32, 524, 1, 210],
                         motion.shape,
                         clip_denoised=clip_denoised,
                         model_kwargs=model_kwargs,
                         skip_timesteps=0,  # 0 is the default value - i.e. don't skip any step
                         init_image=None,
-                        progress=False,
+                        progress=True,
                         dump_steps=None,
                         noise=None,
                         const_noise=False,
@@ -260,3 +262,4 @@ class CompMDMGeneratedDataset(Dataset):
         word_embeddings = np.concatenate(word_embeddings, axis=0)
 
         return word_embeddings, pos_one_hots, caption, sent_len, motion, m_length, '_'.join(tokens)
+        # return None, None, caption, sent_len, motion, m_length, '_'.join(tokens)

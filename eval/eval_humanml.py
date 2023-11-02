@@ -1,9 +1,12 @@
+import yaml
+from attrdict import AttrDict
+
 from utils.parser_util import evaluation_parser
 from utils.fixseed import fixseed
 from datetime import datetime
 from data_loaders.humanml.motion_loaders.model_motion_loaders import get_mdm_loader  # get_motion_loader
 from data_loaders.humanml.utils.metrics import *
-from data_loaders.humanml.networks.evaluator_wrapper import EvaluatorMDMWrapper
+from data_loaders.humanml.networks.evaluator_wrapper import EvaluatorMDMWrapper, EvaluatorIntergenWrapper
 from collections import OrderedDict
 from data_loaders.humanml.scripts.motion_process import *
 from data_loaders.humanml.utils.utils import *
@@ -276,7 +279,7 @@ if __name__ == '__main__':
     split = 'test'
     gt_loader = get_dataset_loader(name=args.dataset, batch_size=args.batch_size, num_frames=None, split=split, hml_mode='gt')
     gen_loader = get_dataset_loader(name=args.dataset, batch_size=args.batch_size, num_frames=None, split=split, hml_mode='eval')
-    num_actions = gen_loader.dataset.num_actions
+    # num_actions = gen_loader.dataset.num_actions
 
     logger.log("Creating model and diffusion...")
     model, diffusion = create_model_and_diffusion(args, gen_loader)
@@ -301,4 +304,8 @@ if __name__ == '__main__':
     }
 
     eval_wrapper = EvaluatorMDMWrapper(args.dataset, dist_util.dev())
+    # with open("../InterGen/configs/eval_model.yaml", 'r') as f:
+    #     eval_model_cfg = AttrDict(yaml.safe_load(f))
+    # eval_wrapper = EvaluatorIntergenWrapper(eval_model_cfg, dist_util.dev())
+
     evaluation(eval_wrapper, gt_loader, eval_motion_loaders, log_file, replication_times, diversity_times, mm_num_times, run_mm=run_mm)

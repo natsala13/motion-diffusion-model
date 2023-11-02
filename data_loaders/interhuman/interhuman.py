@@ -55,7 +55,7 @@ class InterHumanDataset(data.Dataset):
 
         index = 0
         for root, dirs, files in os.walk(pjoin(datapath, 'motions_processed')):
-            for file in tqdm(files[:500]):
+            for file in tqdm(files):
                 if file.endswith(".npy") and "person1" in root:
                     motion_name = file.split(".")[0]
                     if file.split(".")[0]+"\n" in ignore_list: # or int(motion_name)>1000
@@ -204,3 +204,21 @@ def interhuman_couple_collate(batch):
         'tokens': b[1]  # For compatability reasons
     } for b in batch]
     return collate(adapted_batch)
+
+
+class InterGenNormalizer():
+    def __init__(self):
+        mean = np.load("../InterGen/data/global_mean.npy")
+        std = np.load("../InterGen/data/global_std.npy")
+
+        self.motion_mean = mean
+        self.motion_std = std
+
+
+    def forward(self, x):
+        x = (x - self.motion_mean) / self.motion_std
+        return x
+
+    def backward(self, x):
+        x = x * self.motion_std + self.motion_mean
+        return x

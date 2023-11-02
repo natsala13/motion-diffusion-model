@@ -57,7 +57,6 @@ class WandBPlatform(TrainPlatform):
                 project='mdm', 
                 # We pass a run name (otherwise it’ll be randomly assigned, like sunshine-lollypop-10)
                 name=experiment_name,
-                resume=True,
                 # Track hyperparameters and run metadata
                 config=config)
 

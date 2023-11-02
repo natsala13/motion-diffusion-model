@@ -5,6 +5,7 @@ import torch.nn.functional as F
 import clip
 from model.rotation2xyz import Rotation2xyz
 
+from data_loaders.tensors import collate
 
 
 class MDM(nn.Module):
@@ -199,6 +200,38 @@ class MDM(nn.Module):
         super().train(*args, **kwargs)
         self.rot2xyz.smpl_model.train(*args, **kwargs)
 
+    def forward_test(self, batch, diffusion):
+        # cond = batch["cond"]
+        # # x_start = batch["motions"]
+        # B = cond.shape[0]
+        # T = batch["motion_lens"][0]
+
+        # import ipdb;ipdb.set_trace()
+
+        batch_size = len(batch['text'])
+        n_frames = batch['motion_lens'][0]
+
+        # batch_size, n_joints, n_features, n_frames = x.shape[0]
+        collate_args = [{'inp': torch.zeros(n_frames), 'text': batch['text'][0], 'tokens': None, 'lengths': n_frames}] * batch_size
+        _, model_kwargs = collate(collate_args)
+
+        sample_fn = diffusion.p_sample_loop
+        sample = sample_fn(
+            self,
+            # (args.batch_size, model.njoints, model.nfeats, n_frames),  # BUG FIX - this one caused a mismatch between training and inference
+            (batch_size, self.njoints, self.nfeats, n_frames),  # BUG FIX
+            clip_denoised=False,
+            model_kwargs=model_kwargs,
+            skip_timesteps=0,  # 0 is the default value - i.e. don't skip any step
+            init_image=None,
+            progress=True,
+            dump_steps=None,
+            noise=None,
+            const_noise=False,
+        )
+
+        return {'output': sample.permute(0, 3, 1, 2)}
+    
 
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, dropout=0.1, max_len=5000):

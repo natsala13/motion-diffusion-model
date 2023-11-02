@@ -10,13 +10,9 @@ from tqdm import tqdm
 from torch.utils import data
 from torch.utils.data._utils.collate import default_collate
 
-from utils.intergen_utils import load_motion
 from data_loaders.humanml.utils.get_opt import get_opt
 from data_loaders.humanml.utils.word_vectorizer import WordVectorizer
-from utils.intergen_utils import process_motion_np, rigid_transform
-from data_loaders.humanml.common.quaternion import qmul_np, qinv_np, qrot_np
 
-# import spacy
 
 def collate_fn(batch):
     batch.sort(key=lambda x: x[3], reverse=True)
