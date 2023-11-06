@@ -14,6 +14,7 @@ from data_loaders.tensors import collate
 
 class InterHumanDataset(data.Dataset):
     def __init__(self, split, datapath='../InterGen/data/interhuman/', **kwargs):
+        self.dataname = 'intergen'
         self.max_cond_length = 1
         self.min_cond_length = 1
         self.max_gt_length = 300

@@ -17,6 +17,8 @@ from diffusion.nn import mean_flat, sum_flat
 from diffusion.losses import normal_kl, discretized_gaussian_log_likelihood
 from data_loaders.humanml.scripts import motion_process
 
+N_JOINTS = 22
+
 def get_named_beta_schedule(schedule_name, num_diffusion_timesteps, scale_betas=1.):
     """
     Get a pre-defined beta schedule for the given name.
@@ -211,6 +213,33 @@ class GaussianDiffusion:
         mse_loss_val = loss / non_zero_elements
         # print('mse_loss_val', mse_loss_val)
         return mse_loss_val
+
+    def masked_intergen_separeted_loss(self, a, b, mask, result: torch.Tensor):
+        # assuming a.shape == b.shape == bs, J, Jdim, seqlen
+        # assuming mask.shape == bs, 1, 1, seqlen
+        loss = self.l2_loss(a, b)
+        loss = loss * mask.float()
+
+        batch, features, _, _ = loss.shape
+        loss = loss.reshape((batch, 2, features // 2, -1))
+
+        locations = sum_flat(loss[:, :, :3 * N_JOINTS])
+        velocity  = sum_flat(loss[:, :, 3 * N_JOINTS: 3 * N_JOINTS + 3 * N_JOINTS])
+        rotations = sum_flat(loss[:, :, 6 * N_JOINTS: 6 * N_JOINTS + 6 * (N_JOINTS - 1)])
+        foot_contact = sum_flat(loss[:, :, 6 * N_JOINTS + 6 * (N_JOINTS - 1):])
+
+        final_loss = {'location': locations,
+                      'velocity': velocity,
+                      'rotations': rotations,
+                      'foot_contact': foot_contact}
+
+        n_entries = a.shape[1] * a.shape[2]
+        non_zero_elements = sum_flat(mask) * n_entries
+        
+        final_loss = {key: loss / non_zero_elements for key, loss in final_loss.items()}
+
+
+        return final_loss
 
 
     def q_mean_variance(self, x_start, t):
@@ -1224,6 +1253,67 @@ class GaussianDiffusion:
         output = th.where((t == 0), decoder_nll, kl)
         return {"output": output, "pred_xstart": out["pred_xstart"]}
 
+
+    def geometric_loss(self, enc, target, model_output, mask, terms, dataset_name):
+        target_xyz, model_output_xyz = None, None
+        # enc = model.model
+        get_xyz = lambda sample: enc.rot2xyz(sample, mask=None,
+                                            pose_rep=enc.pose_rep,
+                                            translation=enc.translation,
+                                             glob=enc.glob,
+                                             # jointstype='vertices',  # 3.4 iter/sec # USED ALSO IN MotionCLIP
+                                             jointstype='smpl',  # 3.4 iter/sec
+                                             vertstrans=False)
+
+        if self.lambda_rcxyz > 0.:
+            target_xyz = get_xyz(target)  # [bs, nvertices(vertices)/njoints(smpl), 3, nframes]
+            model_output_xyz = get_xyz(model_output)  # [bs, nvertices, 3, nframes]
+            terms["rcxyz_mse"] = self.masked_l2(target_xyz, model_output_xyz, mask)  # mean_flat((target_xyz - model_output_xyz) ** 2)
+
+        if self.lambda_vel_rcxyz > 0.:
+            if self.data_rep == 'rot6d' and dataset_name in ['humanact12', 'uestc']:
+                target_xyz = get_xyz(target) if target_xyz is None else target_xyz
+                model_output_xyz = get_xyz(model_output) if model_output_xyz is None else model_output_xyz
+                target_xyz_vel = (target_xyz[:, :, :, 1:] - target_xyz[:, :, :, :-1])
+                model_output_xyz_vel = (model_output_xyz[:, :, :, 1:] - model_output_xyz[:, :, :, :-1])
+                terms["vel_xyz_mse"] = self.masked_l2(target_xyz_vel, model_output_xyz_vel, mask[:, :, :, 1:])
+
+        if self.lambda_fc > 0.:
+            torch.autograd.set_detect_anomaly(True)
+            if self.data_rep == 'rot6d' and dataset_name in ['humanact12', 'uestc']:
+                target_xyz = get_xyz(target) if target_xyz is None else target_xyz
+                model_output_xyz = get_xyz(model_output) if model_output_xyz is None else model_output_xyz
+                # 'L_Ankle',  # 7, 'R_Ankle',  # 8 , 'L_Foot',  # 10, 'R_Foot',  # 11
+                l_ankle_idx, r_ankle_idx, l_foot_idx, r_foot_idx = 7, 8, 10, 11
+                relevant_joints = [l_ankle_idx, l_foot_idx, r_ankle_idx, r_foot_idx]
+                gt_joint_xyz = target_xyz[:, relevant_joints, :, :]  # [BatchSize, 4, 3, Frames]
+                gt_joint_vel = torch.linalg.norm(gt_joint_xyz[:, :, :, 1:] - gt_joint_xyz[:, :, :, :-1], axis=2)  # [BatchSize, 4, Frames]
+                fc_mask = torch.unsqueeze((gt_joint_vel <= 0.01), dim=2).repeat(1, 1, 3, 1)
+                pred_joint_xyz = model_output_xyz[:, relevant_joints, :, :]  # [BatchSize, 4, 3, Frames]
+                pred_vel = pred_joint_xyz[:, :, :, 1:] - pred_joint_xyz[:, :, :, :-1]
+                pred_vel[~fc_mask] = 0
+                terms["fc"] = self.masked_l2(pred_vel,
+                                                torch.zeros(pred_vel.shape, device=pred_vel.device),
+                                                mask[:, :, :, 1:])
+        if self.lambda_vel > 0.:
+            target_vel = (target[..., 1:] - target[..., :-1])
+            model_output_vel = (model_output[..., 1:] - model_output[..., :-1])
+            terms["vel_mse"] = self.masked_l2(target_vel[:, :-1, :, :], # Remove last joint, is the root location!
+                                                model_output_vel[:, :-1, :, :],
+                                                mask[:, :, :, 1:])  # mean_flat((target_vel - model_output_vel) ** 2)
+
+    def get_target(self, x_start, x_t, t, noise, output_shape: tuple):
+        target = {
+            ModelMeanType.PREVIOUS_X: self.q_posterior_mean_variance(
+                x_start=x_start, x_t=x_t, t=t
+            )[0],
+            ModelMeanType.START_X: x_start,
+            ModelMeanType.EPSILON: noise,
+        }[self.model_mean_type]
+        assert output_shape == target.shape == x_start.shape  # [bs, njoints, nfeats, nframes]
+
+        return target
+
     def training_losses(self, model, x_start, t, model_kwargs=None, noise=None, dataset=None):
         """
         Compute training losses for a single timestep.
@@ -1238,14 +1328,7 @@ class GaussianDiffusion:
                  Some mean or variance settings may also have other keys.
         """
 
-        # enc = model.model._modules['module']
-        enc = model.model
         mask = model_kwargs['y']['mask']  # TODO: Mask is probably the lotion's length! not the condition. and so while calculating loss we need the mask.
-        get_xyz = lambda sample: enc.rot2xyz(sample, mask=None, pose_rep=enc.pose_rep, translation=enc.translation,
-                                             glob=enc.glob,
-                                             # jointstype='vertices',  # 3.4 iter/sec # USED ALSO IN MotionCLIP
-                                             jointstype='smpl',  # 3.4 iter/sec
-                                             vertstrans=False)
 
         if model_kwargs is None:
             model_kwargs = {}
@@ -1268,7 +1351,7 @@ class GaussianDiffusion:
                 terms["loss"] *= self.num_timesteps
         elif self.loss_type == LossType.MSE or self.loss_type == LossType.RESCALED_MSE:
             model_output = model(x_t, self._scale_timesteps(t), **model_kwargs)
-
+            
             if self.model_var_type in [ModelVarType.LEARNED, ModelVarType.LEARNED_RANGE]:
                 B, C = x_t.shape[:2]
                 assert model_output.shape == (B, C * 2, *x_t.shape[2:])
@@ -1288,60 +1371,21 @@ class GaussianDiffusion:
                     # Without a factor of 1/1000, the VB term hurts the MSE term.
                     terms["vb"] *= self.num_timesteps / 1000.0
 
-            target = {
-                ModelMeanType.PREVIOUS_X: self.q_posterior_mean_variance(
-                    x_start=x_start, x_t=x_t, t=t
-                )[0],
-                ModelMeanType.START_X: x_start,
-                ModelMeanType.EPSILON: noise,
-            }[self.model_mean_type]
-            assert model_output.shape == target.shape == x_start.shape  # [bs, njoints, nfeats, nframes]
 
+            target = self.get_target(x_start, x_t, t, noise, model_output.shape)
             terms["rot_mse"] = self.masked_l2(target, model_output, mask) # mean_flat(rot_mse)
+            separeted_loss = self.masked_intergen_separeted_loss(target, model_output, mask, terms["rot_mse"])
+            assert torch.sum((sum(separeted_loss.values()) - terms["rot_mse"]) ** 2) < 1e-5
 
-            target_xyz, model_output_xyz = None, None
-
-            if self.lambda_rcxyz > 0.:
-                target_xyz = get_xyz(target)  # [bs, nvertices(vertices)/njoints(smpl), 3, nframes]
-                model_output_xyz = get_xyz(model_output)  # [bs, nvertices, 3, nframes]
-                terms["rcxyz_mse"] = self.masked_l2(target_xyz, model_output_xyz, mask)  # mean_flat((target_xyz - model_output_xyz) ** 2)
-
-            if self.lambda_vel_rcxyz > 0.:
-                if self.data_rep == 'rot6d' and dataset.dataname in ['humanact12', 'uestc']:
-                    target_xyz = get_xyz(target) if target_xyz is None else target_xyz
-                    model_output_xyz = get_xyz(model_output) if model_output_xyz is None else model_output_xyz
-                    target_xyz_vel = (target_xyz[:, :, :, 1:] - target_xyz[:, :, :, :-1])
-                    model_output_xyz_vel = (model_output_xyz[:, :, :, 1:] - model_output_xyz[:, :, :, :-1])
-                    terms["vel_xyz_mse"] = self.masked_l2(target_xyz_vel, model_output_xyz_vel, mask[:, :, :, 1:])
-
-            if self.lambda_fc > 0.:
-                torch.autograd.set_detect_anomaly(True)
-                if self.data_rep == 'rot6d' and dataset.dataname in ['humanact12', 'uestc']:
-                    target_xyz = get_xyz(target) if target_xyz is None else target_xyz
-                    model_output_xyz = get_xyz(model_output) if model_output_xyz is None else model_output_xyz
-                    # 'L_Ankle',  # 7, 'R_Ankle',  # 8 , 'L_Foot',  # 10, 'R_Foot',  # 11
-                    l_ankle_idx, r_ankle_idx, l_foot_idx, r_foot_idx = 7, 8, 10, 11
-                    relevant_joints = [l_ankle_idx, l_foot_idx, r_ankle_idx, r_foot_idx]
-                    gt_joint_xyz = target_xyz[:, relevant_joints, :, :]  # [BatchSize, 4, 3, Frames]
-                    gt_joint_vel = torch.linalg.norm(gt_joint_xyz[:, :, :, 1:] - gt_joint_xyz[:, :, :, :-1], axis=2)  # [BatchSize, 4, Frames]
-                    fc_mask = torch.unsqueeze((gt_joint_vel <= 0.01), dim=2).repeat(1, 1, 3, 1)
-                    pred_joint_xyz = model_output_xyz[:, relevant_joints, :, :]  # [BatchSize, 4, 3, Frames]
-                    pred_vel = pred_joint_xyz[:, :, :, 1:] - pred_joint_xyz[:, :, :, :-1]
-                    pred_vel[~fc_mask] = 0
-                    terms["fc"] = self.masked_l2(pred_vel,
-                                                 torch.zeros(pred_vel.shape, device=pred_vel.device),
-                                                 mask[:, :, :, 1:])
-            if self.lambda_vel > 0.:
-                target_vel = (target[..., 1:] - target[..., :-1])
-                model_output_vel = (model_output[..., 1:] - model_output[..., :-1])
-                terms["vel_mse"] = self.masked_l2(target_vel[:, :-1, :, :], # Remove last joint, is the root location!
-                                                  model_output_vel[:, :-1, :, :],
-                                                  mask[:, :, :, 1:])  # mean_flat((target_vel - model_output_vel) ** 2)
+            self.geometric_loss(model.model, target, model_output, mask, terms, dataset.dataname)
 
             terms["loss"] = terms["rot_mse"] + terms.get('vb', 0.) +\
                             (self.lambda_vel * terms.get('vel_mse', 0.)) +\
                             (self.lambda_rcxyz * terms.get('rcxyz_mse', 0.)) + \
                             (self.lambda_fc * terms.get('fc', 0.))
+            
+            for key, loss in separeted_loss.items():
+                terms[key] = loss
 
         else:
             raise NotImplementedError(self.loss_type)

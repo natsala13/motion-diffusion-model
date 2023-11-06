@@ -50,13 +50,14 @@ class NoPlatform(TrainPlatform):
     pass
 
 class WandBPlatform(TrainPlatform):
-    def __init__(self, save_dir, experiment_name='mdm couple experiment', **config):
+    def __init__(self, save_dir, experiment_name='mdm couple experiment', resume=False, **config):
         super().__init__(save_dir)
         wandb.init(
                 # Set the project where this run will be logged
                 project='mdm', 
                 # We pass a run name (otherwise it’ll be randomly assigned, like sunshine-lollypop-10)
                 name=experiment_name,
+                resume=resume,
                 # Track hyperparameters and run metadata
                 config=config)
 

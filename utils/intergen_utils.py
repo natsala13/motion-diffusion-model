@@ -73,10 +73,9 @@ def load_motion(file_path, min_length, swap=False):
         print("error: ", file_path)
         return None, None
     
-    # import ipdb;ipdb.set_trace()
-    motion1 = motion[:, :N_JOINTS * 3]
-    motion2 = motion[:, 62 * 3:62 * 3 + 21 * 6]
-    motion = np.concatenate([motion1, motion2], axis=1)
+    xyz = motion[:, :N_JOINTS * 3]  # xyz location
+    rotations = motion[:, 62 * 3:62 * 3 + 21 * 6]  # rotations
+    motion = np.concatenate([xyz, rotations], axis=1)
 
     if motion.shape[0] < min_length:
         return None, None
