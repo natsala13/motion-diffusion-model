@@ -134,7 +134,7 @@ class TrainLoop:
                 self.run_step(motion, cond)
                 
                 if self.step % self.log_interval == 0:  # log_interval: 1000, size(data): 10k, data/batch_size = ~150, --> log every +-6 epochs
-                    for k,v in logger.get_current().name2val.items():
+                    for k,v in logger.get_current().dumpkvs().items():
                         if k == 'loss':
                             print('step[{}]: loss[{:0.5f}]'.format(self.step+self.resume_step, v))
 
@@ -246,7 +246,7 @@ class TrainLoop:
 
         loss = (losses["loss"] * weights).mean()
         log_loss_dict(
-            self.diffusion, t, {k: v * weights for k, v in losses.items()}
+            self.diffusion.num_timesteps, t, {k: v * weights for k, v in losses.items()}
         )
         self.mp_trainer.backward(loss)
 
@@ -317,10 +317,10 @@ def find_resume_checkpoint():
     return None
 
 
-def log_loss_dict(diffusion, ts, losses):
+def log_loss_dict(num_timesteps, ts, losses):
     for key, values in losses.items():
         logger.logkv_mean(key, values.mean().item())
         # Log the quantiles (four quartiles, in particular).
         for sub_t, sub_loss in zip(ts.cpu().numpy(), values.detach().cpu().numpy()):
-            quartile = int(4 * sub_t / diffusion.num_timesteps)
+            quartile = int(4 * sub_t / num_timesteps)
             logger.logkv_mean(f"{key}_q{quartile}", sub_loss)
