@@ -1374,8 +1374,6 @@ class GaussianDiffusion:
 
             target = self.get_target(x_start, x_t, t, noise, model_output.shape)
             terms["rot_mse"] = self.masked_l2(target, model_output, mask) # mean_flat(rot_mse)
-            separeted_loss = self.masked_intergen_separeted_loss(target, model_output, mask, terms["rot_mse"])
-            assert torch.sum((sum(separeted_loss.values()) - terms["rot_mse"]) ** 2) < 1e-5
 
             self.geometric_loss(model.model, target, model_output, mask, terms, dataset.dataname)
 
@@ -1383,9 +1381,11 @@ class GaussianDiffusion:
                             (self.lambda_vel * terms.get('vel_mse', 0.)) +\
                             (self.lambda_rcxyz * terms.get('rcxyz_mse', 0.)) + \
                             (self.lambda_fc * terms.get('fc', 0.))
-            
-            for key, loss in separeted_loss.items():
-                terms[key] = loss
+
+            # separeted_loss = self.masked_intergen_separeted_loss(target, model_output, mask, terms["rot_mse"])
+            # assert torch.sum((sum(separeted_loss.values()) - terms["rot_mse"]) ** 2) < 1e-5
+            # for key, loss in separeted_loss.items():
+            #     terms[key] = loss
 
         else:
             raise NotImplementedError(self.loss_type)

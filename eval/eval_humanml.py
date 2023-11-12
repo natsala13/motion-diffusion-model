@@ -33,14 +33,7 @@ def evaluate_matching_score(eval_wrapper, motion_loaders, file):
         # print(motion_loader_name)
         with torch.no_grad():
             for idx, batch in enumerate(motion_loader):
-                word_embeddings, pos_one_hots, _, sent_lens, motions, m_lens, _ = batch
-                text_embeddings, motion_embeddings = eval_wrapper.get_co_embeddings(
-                    word_embs=word_embeddings,
-                    pos_ohot=pos_one_hots,
-                    cap_lens=sent_lens,
-                    motions=motions,
-                    m_lens=m_lens
-                )
+                text_embeddings, motion_embeddings = eval_wrapper.get_co_embeddings(batch_data=batch)
                 dist_mat = euclidean_distance_matrix(text_embeddings.cpu().numpy(),
                                                      motion_embeddings.cpu().numpy())
                 matching_score_sum += dist_mat.trace()
@@ -277,7 +270,8 @@ if __name__ == '__main__':
 
     logger.log("creating data loader...")
     split = 'test'
-    gt_loader = get_dataset_loader(name=args.dataset, batch_size=args.batch_size, num_frames=None, split=split, hml_mode='gt')
+    # TODO: The difference is the mean loaded, - Why is it different?
+    # gt_loader = get_dataset_loader(name=args.dataset, batch_size=args.batch_size, num_frames=None, split=split, hml_mode='gt')
     gen_loader = get_dataset_loader(name=args.dataset, batch_size=args.batch_size, num_frames=None, split=split, hml_mode='eval')
     # num_actions = gen_loader.dataset.num_actions
 
@@ -299,13 +293,13 @@ if __name__ == '__main__':
         ################
         'vald': lambda: get_mdm_loader(
             model, diffusion, args.batch_size,
-            gen_loader, mm_num_samples, mm_num_repeats, gt_loader.dataset.opt.max_motion_length, num_samples_limit, args.guidance_param
+            gen_loader, mm_num_samples, mm_num_repeats, gen_loader.dataset.opt.max_motion_length, num_samples_limit, args.guidance_param
         )
     }
 
-    eval_wrapper = EvaluatorMDMWrapper(args.dataset, dist_util.dev())
-    # with open("../InterGen/configs/eval_model.yaml", 'r') as f:
-    #     eval_model_cfg = AttrDict(yaml.safe_load(f))
-    # eval_wrapper = EvaluatorIntergenWrapper(eval_model_cfg, dist_util.dev())
+    # eval_wrapper = EvaluatorMDMWrapper(args.dataset, dist_util.dev())
+    with open("../InterGen/configs/eval_model.yaml", 'r') as f:
+        eval_model_cfg = AttrDict(yaml.safe_load(f))
+    eval_wrapper = EvaluatorIntergenWrapper(eval_model_cfg, dist_util.dev())
 
-    evaluation(eval_wrapper, gt_loader, eval_motion_loaders, log_file, replication_times, diversity_times, mm_num_times, run_mm=run_mm)
+    evaluation(eval_wrapper, gen_loader, eval_motion_loaders, log_file, replication_times, diversity_times, mm_num_times, run_mm=run_mm)

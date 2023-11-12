@@ -152,10 +152,11 @@ class EvaluatorMDMWrapper(object):
         self.movement_encoder.eval()
 
     # Please note that the results does not following the order of inputs
-    def get_co_embeddings(self, word_embs, pos_ohot, cap_lens, motions, m_lens):
+    def get_co_embeddings(self, batch_data):
+        word_embeddings, pos_one_hots, _, cap_lens, motions, m_lens, _ = batch_data
         with torch.no_grad():
-            word_embs = word_embs.detach().to(self.device).float()
-            pos_ohot = pos_ohot.detach().to(self.device).float()
+            word_embs = word_embeddings.detach().to(self.device).float()
+            pos_ohot = pos_one_hots.detach().to(self.device).float()
             motions = motions.detach().to(self.device).float()
 
             align_idx = np.argsort(m_lens.data.tolist())[::-1].copy()
