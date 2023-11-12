@@ -13,7 +13,7 @@ from data_loaders.tensors import collate
  
 
 class InterHumanDataset(data.Dataset):
-    def __init__(self, split, datapath='../InterGen/data/interhuman/', **kwargs):
+    def __init__(self, split, datapath='../InterGen/data/interhuman/', num_frames=-1, **kwargs):
         self.dataname = 'intergen'
         self.max_cond_length = 1
         self.min_cond_length = 1
@@ -23,9 +23,11 @@ class InterHumanDataset(data.Dataset):
         self.max_length = self.max_cond_length + self.max_gt_length -1
         self.min_length = self.min_cond_length + self.min_gt_length -1
 
+        self.normalizer = InterGenNormalizer()
+
         # self.motion_rep = global
         self.data_list = []
-        self.motion_dict = {}
+        self.motion_dict = []
 
         self.cache = True
 
@@ -52,18 +54,21 @@ class InterHumanDataset(data.Dataset):
                 print(e)
 
         random.shuffle(data_list)
+        data_list = [int(file[:-1]) for file in data_list]
         # data_list = data_list[:70]
 
         index = 0
-        for root, dirs, files in os.walk(pjoin(datapath, 'motions_processed')):
-            for file in tqdm(files):
+        for root, dirs, files in os.walk(pjoin(datapath, 'motions_processed/person1')):
+            files = [file for file in files if int(file.split('.')[0]) in data_list]
+            num_frames = num_frames if num_frames > 0 else len(files)
+            for file in tqdm(files[:num_frames]):
                 if file.endswith(".npy") and "person1" in root:
                     motion_name = file.split(".")[0]
                     if file.split(".")[0]+"\n" in ignore_list: # or int(motion_name)>1000
                         print("ignore: ", file)
                         continue
-                    if file.split(".")[0]+"\n" not in data_list:
-                        continue
+                    # if file.split(".")[0]+"\n" not in data_list:
+                    #     continue
                     file_path_person1 = pjoin(root, file)
                     file_path_person2 = pjoin(root.replace("person1", "person2"), file)
                     text_path = file_path_person1.replace("motions_processed", "annots").replace("person1", "").replace("npy", "txt")
@@ -80,11 +85,11 @@ class InterHumanDataset(data.Dataset):
                         motion2, motion2_swap = load_motion(file_path_person2, self.min_length, swap=True)
                         if motion1 is None:
                             continue
-                        self.motion_dict[index] = [motion1, motion2]
-                        self.motion_dict[index+1] = [motion1_swap, motion2_swap]
+                        self.motion_dict.append([motion1, motion2])
+                        self.motion_dict.append([motion1_swap, motion2_swap])
                     else:
-                        self.motion_dict[index] = [file_path_person1, file_path_person2]
-                        self.motion_dict[index + 1] = [file_path_person1, file_path_person2]
+                        self.motion_dict.append([file_path_person1, file_path_person2])
+                        self.motion_dict.append([file_path_person1, file_path_person2])
 
 
 
@@ -163,8 +168,8 @@ class InterHumanDataset(data.Dataset):
         motion2 = rigid_transform(relative, motion2)
 
 
-        gt_motion1 = motion1
-        gt_motion2 = motion2
+        gt_motion1 = self.normalizer.forward(motion1)
+        gt_motion2 = self.normalizer.forward(motion2)
 
         gt_length = len(gt_motion1)
         if gt_length < self.max_gt_length:
@@ -186,6 +191,14 @@ class InterHumanDataset(data.Dataset):
 
     def shape(self):
         pass
+
+    @property
+    def opt(self):
+        class Opt:
+            def __init__(self, max_length) -> None:
+                self.max_motion_length = max_length
+
+        return Opt(self.max_length)
 
 
 # an adapter to our collate func
