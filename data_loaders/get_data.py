@@ -20,7 +20,7 @@ def get_dataset_class(name):
     elif name == "kit":
         from data_loaders.humanml.data.dataset import KIT
         return KIT
-    elif name == "interhuman":
+    elif name == "interhuman" or name == 'interhuman_solo':
         return InterHumanDataset
     else:
         raise ValueError(f'Unsupported dataset name [{name}]')
@@ -33,6 +33,8 @@ def get_collate_fn(name, hml_mode='train'):
         return t2m_collate
     elif name == 'interhuman':
         return interhuman_couple_collate
+    elif name == 'interhuman_solo':
+        return interhuman_collate
     else:
         return all_collate
 

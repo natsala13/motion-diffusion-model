@@ -98,7 +98,7 @@ def add_model_options(parser):
 
 def add_data_options(parser):
     group = parser.add_argument_group('dataset')
-    group.add_argument("--dataset", default='humanml', choices=['humanml', 'kit', 'humanact12', 'uestc', 'interhuman'], type=str,
+    group.add_argument("--dataset", default='humanml', choices=['humanml', 'kit', 'humanact12', 'uestc', 'interhuman', 'interhuman_solo'], type=str,
                        help="Dataset name (choose from list).")
     group.add_argument("--data_dir", default="", type=str,
                        help="If empty, will use defaults according to the specified dataset.")
@@ -132,7 +132,7 @@ def add_training_options(parser):
                        help="Save checkpoints and run evaluation each N steps")
     group.add_argument("--num_steps", default=600_000, type=int,
                        help="Training will stop after the specified number of steps.")
-    group.add_argument("--num_frames", default=60, type=int,
+    group.add_argument("--num_frames", default=-1, type=int,
                        help="Limit for the maximal number of frames. In HumanML3D and KIT this field is ignored.")
     group.add_argument("--resume_checkpoint", default="", type=str,
                        help="If not empty, will start from the specified checkpoint (path to model###.pt file).")
@@ -205,7 +205,7 @@ def add_evaluation_options(parser):
 def get_cond_mode(args):
     if args.unconstrained:
         cond_mode = 'no_cond'
-    elif args.dataset in ['kit', 'humanml', 'interhuman']:
+    elif args.dataset in ['kit', 'humanml', 'interhuman', 'interhuman_solo']:
         cond_mode = 'text'
     else:
         cond_mode = 'action'

@@ -51,18 +51,17 @@ class NoPlatform(TrainPlatform):
 
 class WandBPlatform(TrainPlatform):
     def __init__(self, save_dir, experiment_name='mdm couple experiment', resume=False, **config):
+        print(f'{"Starting new" if not resume else "Resuming"} experiment {experiment_name} ')
         super().__init__(save_dir)
         wandb.init(
-                # Set the project where this run will be logged
                 project='mdm', 
                 # We pass a run name (otherwise it’ll be randomly assigned, like sunshine-lollypop-10)
                 name=experiment_name,
-                resume=resume,
-                # Track hyperparameters and run metadata
+                resume=False,
                 config=config)
 
     def report_scalar(self, name, value, iteration, group_name=None):
-        wandb.log({name: value})
+        wandb.log({name: value}, step=iteration)
 
     def report_args(self, args, name):
         pass
@@ -77,8 +76,6 @@ class WandBPlatform(TrainPlatform):
         # run = api.run(f"{username}/{project}/{run_id}")
         # run.config["bar"] = 32
         # run.update()
-
-
 
     def close(self):
         wandb.finish()

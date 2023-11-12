@@ -17,6 +17,7 @@ import data_loaders.humanml.utils.paramUtil as paramUtil
 from data_loaders.humanml.utils.plot_script import plot_3d_motion, plot_3d_motion_interaction
 import shutil
 from data_loaders.tensors import collate
+from data_loaders.interhuman.interhuman import InterGenNormalizer
 
 
 def main():
@@ -67,7 +68,8 @@ def main():
     args.batch_size = args.num_samples  # Sampling a single batch from the testset, with exactly args.num_samples
 
     print('Loading dataset...')
-    # data = load_dataset(args, max_frames, n_frames)
+    data = load_dataset(args, max_frames, n_frames)
+    normalizer = InterGenNormalizer()
     total_num_samples = args.num_samples * args.num_repetitions
 
     print("Creating model and diffusion...")
@@ -126,7 +128,6 @@ def main():
             const_noise=False,
         )
 
-        # import ipdb;ipdb.set_trace()  # 263 - vel, 
         # Recover XYZ *positions* from HumanML3D vector representation
         if model.data_rep == 'hml_vec':
             n_joints = 22 if sample.shape[1] == 263 else 21
@@ -136,13 +137,21 @@ def main():
         elif model.data_rep == 'interhuman':
             n_joints = 22
             xyz_features = 3
-            # import ipdb;ipdb.set_trace()
             sample = sample.reshape(args.batch_size, 2, -1, max_frames)
+            sample = normalizer.backward(sample.cpu().permute(0, 1, 3, 2))
+            sample = sample.permute(0, 1, 3, 2)[..., :n_joints * xyz_features, :]
+            # sample = sample[..., :n_joints * xyz_features, :]
+        elif model.data_rep == 'interhuman_solo':
+            n_joints = 22
+            xyz_features = 3
+            # import ipdb;ipdb.set_trace()
+            sample = sample.reshape(args.batch_size, 1, -1, max_frames)
+            # sample = normalizer.backward(sample.cpu().permute(0, 1, 3, 2))  # TODO: Use only half of that normaliser
             sample = sample[..., :n_joints * xyz_features, :]
+            # sample = sample[..., :n_joints * xyz_features, :]
 
-        rot2xyz_pose_rep = 'xyz' if model.data_rep in ['xyz', 'hml_vec', 'interhuman']  else model.data_rep
+        rot2xyz_pose_rep = 'xyz' if model.data_rep in ['xyz', 'hml_vec', 'interhuman', 'interhuman_solo']  else model.data_rep
         rot2xyz_mask = None if rot2xyz_pose_rep == 'xyz' else model_kwargs['y']['mask'].reshape(args.batch_size, n_frames).bool()
-        # import ipdb;ipdb.set_trace()
         sample = model.rot2xyz(x=sample, mask=rot2xyz_mask, pose_rep=rot2xyz_pose_rep, glob=True, translation=True,
                                jointstype='smpl', vertstrans=True, betas=None, beta=0, glob_rot=None,
                                get_rotations_back=False)
