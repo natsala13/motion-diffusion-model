@@ -1,10 +1,13 @@
 import copy
 import functools
 import os
+import re
+from os.path import join as pjoin
 import time
 from types import SimpleNamespace
-import numpy as np
+from functools import partial
 
+import numpy as np
 import blobfile as bf
 import torch
 from torch.optim import AdamW
@@ -16,9 +19,17 @@ from diffusion.resample import LossAwareSampler, UniformSampler
 from tqdm import tqdm
 from diffusion.resample import create_named_schedule_sampler
 from data_loaders.humanml.networks.evaluator_wrapper import EvaluatorMDMWrapper
-from eval import eval_humanml, eval_humanact12_uestc
+from eval import eval_humanml, eval_humanact12_uestc, eval_intergen
 from data_loaders.get_data import get_dataset_loader
 
+
+# Intergen evaluation imports.
+from torch.utils.data import DataLoader
+from data_loaders.interhuman.interhuman import InterHumanDataset
+
+from utils.intergen_eval_utils import get_config, get_intergen_loader
+from data_loaders.humanml.networks.evaluator_wrapper import EvaluatorIntergenWrapper
+# from datasets.evaluator import get_motion_loader
 
 # For ImageNet experiments, this was a good default value.
 # We found that the lg_loss_scale quickly climbed to
@@ -54,6 +65,7 @@ class TrainLoop:
 
         self.sync_cuda = torch.cuda.is_available()
 
+        self.save_dir = args.save_dir
         self._load_and_sync_parameters()
         self.mp_trainer = MixedPrecisionTrainer(
             model=self.model,
@@ -61,7 +73,6 @@ class TrainLoop:
             fp16_scale_growth=self.fp16_scale_growth,
         )
 
-        self.save_dir = args.save_dir
         self.overwrite = args.overwrite
 
         self.opt = AdamW(
@@ -78,7 +89,7 @@ class TrainLoop:
 
         self.schedule_sampler_type = 'uniform'
         self.schedule_sampler = create_named_schedule_sampler(self.schedule_sampler_type, diffusion)
-        self.eval_wrapper, self.eval_data, self.eval_gt_data = None, None, None
+        self.eval_wrapper   , self.eval_data, self.eval_gt_data = None, None, None
         if args.dataset in ['kit', 'humanml'] and args.eval_during_training:
             mm_num_samples = 0  # mm is super slow hence we won't run it during training
             mm_num_repeats = 0  # mm is super slow hence we won't run it during training
@@ -97,10 +108,31 @@ class TrainLoop:
                     args.eval_num_samples, scale=1.,
                 )
             }
+        elif 'interhuman' in args.dataset :
+            # self.eval_gt_data, gt_dataset = get_dataset_motion_loader(split='test')
+            gt_dataset = InterHumanDataset(split='test', num_frames=args.num_frames)
+            self.eval_gt_data = DataLoader(gt_dataset, batch_size=args.eval_batch_size,
+                                           shuffle=True, num_workers=0, drop_last=True)
+
+            eval_config = get_config('../InterGen/configs/eval_model.yaml')
+            self.eval_wrapper = EvaluatorIntergenWrapper(eval_config, self.device)
+
+            self.eval_data = {'test': partial(get_intergen_loader,
+                                                args.eval_batch_size,  # has to be 96!
+                                                model,
+                                                gt_dataset,
+                                                self.device,
+                                                mm_num_samples=0,
+                                                mm_num_repeats=0
+                                                )
+                                                }
+            
+
+
         self.use_ddp = False
 
     def _load_and_sync_parameters(self):
-        resume_checkpoint = find_resume_checkpoint() or self.resume_checkpoint
+        resume_checkpoint = find_resume_checkpoint(self.save_dir) or self.resume_checkpoint
 
         if resume_checkpoint:
             self.resume_step = parse_resume_step_from_filename(resume_checkpoint)
@@ -109,7 +141,7 @@ class TrainLoop:
             self.model.load_state_dict(state_dict, strict=False)  # Due to Clip's weight that are not saved in checkpoint.
 
     def _load_optimizer_state(self):
-        main_checkpoint = find_resume_checkpoint() or self.resume_checkpoint
+        main_checkpoint = find_resume_checkpoint(self.save_dir) or self.resume_checkpoint
         opt_checkpoint = bf.join(
             bf.dirname(main_checkpoint), f"opt{self.resume_step:09}.pt"
         )
@@ -130,7 +162,7 @@ class TrainLoop:
 
                 motion = motion.to(self.device)  # (batch, ch , ? , time), humanml: (64, 263, 1, 196)
                 cond['y'] = {key: val.to(self.device) if torch.is_tensor(val) else val for key, val in cond['y'].items()}
-
+                
                 self.run_step(motion, cond)
                 
                 if self.step % self.log_interval == 0:  # log_interval: 1000, size(data): 10k, data/batch_size = ~150, --> log every +-6 epochs
@@ -141,7 +173,7 @@ class TrainLoop:
                         if k in ['step', 'samples'] or '_q' in k:
                             continue
                         else:
-                            self.train_platform.report_scalar(name=k, value=v, iteration=self.step, group_name='Loss')
+                            self.train_platform.report_scalar(name=k, value=v, iteration=self.step + self.resume_step, group_name='Loss')
 
                 if self.step % self.save_interval == 0:
                     self.save()
@@ -166,16 +198,14 @@ class TrainLoop:
             return
         start_eval = time.time()
 
-        import ipdb;ipdb.set_trace()
-
         if self.eval_wrapper is not None:
             print('Running evaluation loop: [Should take about 90 min]')
-            log_file = os.path.join(self.save_dir, f'eval_humanml_{(self.step + self.resume_step):09d}.log')
+            log_file = os.path.join(self.save_dir, f'eval_interhumam_{(self.step + self.resume_step):09d}.log')
             diversity_times = 300
             mm_num_times = 0  # mm is super slow hence we won't run it during training
-            eval_dict = eval_humanml.evaluation(
+            eval_dict = eval_intergen.evaluation(
                 self.eval_wrapper, self.eval_gt_data, self.eval_data, log_file,
-                replication_times=self.args.eval_rep_times, diversity_times=diversity_times, mm_num_times=mm_num_times, run_mm=False)
+                replication_times=1, diversity_times=diversity_times, mm_num_times=mm_num_times, run_mm=False)
             print(eval_dict)
             for k, v in eval_dict.items():
                 if k.startswith('R_precision'):
@@ -311,10 +341,11 @@ def get_blob_logdir():
     return logger.get_dir()
 
 
-def find_resume_checkpoint():
-    # On your infrastructure, you may want to override this to automatically
-    # discover the latest checkpoint on your blob storage, etc.
-    return None
+def find_resume_checkpoint(save_dir: str):
+    matches = {file: re.match(r'model(\d+).pt', file) for file in os.listdir(save_dir)}
+    models = {int(match.group(1)): file for file, match in matches.items() if match}
+    
+    return pjoin(save_dir, models[max(models)]) if models else None
 
 
 def log_loss_dict(num_timesteps, ts, losses):

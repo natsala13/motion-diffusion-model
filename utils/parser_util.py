@@ -67,7 +67,7 @@ def add_diffusion_options(parser):
     group = parser.add_argument_group('diffusion')
     group.add_argument("--noise_schedule", default='cosine', choices=['linear', 'cosine'], type=str,
                        help="Noise schedule type")
-    group.add_argument("--diffusion_steps", default=1000, type=int,
+    group.add_argument("--diffusion_steps", default=100, type=int,
                        help="Number of diffusion steps (denoted T in the paper)")
     group.add_argument("--sigma_small", default=True, type=bool, help="Use smaller sigma values.")
 
@@ -82,8 +82,8 @@ def add_model_options(parser):
                             " (in addition to cross-attention).")
     group.add_argument("--layers", default=8, type=int,
                        help="Number of layers.")
-    group.add_argument("--latent_dim", default=512, type=int,
-                       help="Transformer/GRU width.")
+    group.add_argument("--latent_dim", default=512, type=int, help="Transformer/GRU width.")
+    group.add_argument("--ff_size", default=1024, type=int, help="ff_size after latent dimension.")
     group.add_argument("--cond_mask_prob", default=.1, type=float,
                        help="The probability of masking the condition during training."
                             " For classifier-free guidance learning.")
@@ -98,7 +98,7 @@ def add_model_options(parser):
 
 def add_data_options(parser):
     group = parser.add_argument_group('dataset')
-    group.add_argument("--dataset", default='humanml', choices=['humanml', 'kit', 'humanact12', 'uestc', 'interhuman', 'interhuman_solo'], type=str,
+    group.add_argument("--dataset", default='humanml', choices=['humanml', 'kit', 'humanact12', 'uestc', 'interhuman', 'interhuman_solo', 'interhuman_matrix'], type=str,
                        help="Dataset name (choose from list).")
     group.add_argument("--data_dir", default="", type=str,
                        help="If empty, will use defaults according to the specified dataset.")
@@ -128,7 +128,7 @@ def add_training_options(parser):
                        help="If -1, will use all samples in the specified split.")
     group.add_argument("--log_interval", default=1_000, type=int,
                        help="Log losses each N steps")
-    group.add_argument("--save_interval", default=10_000, type=int,
+    group.add_argument("--save_interval", default=50_000, type=int,
                        help="Save checkpoints and run evaluation each N steps")
     group.add_argument("--num_steps", default=600_000, type=int,
                        help="Training will stop after the specified number of steps.")
@@ -205,7 +205,7 @@ def add_evaluation_options(parser):
 def get_cond_mode(args):
     if args.unconstrained:
         cond_mode = 'no_cond'
-    elif args.dataset in ['kit', 'humanml', 'interhuman', 'interhuman_solo']:
+    elif args.dataset in ['kit', 'humanml', 'interhuman', 'interhuman_solo', 'interhuman_matrix']:
         cond_mode = 'text'
     else:
         cond_mode = 'action'

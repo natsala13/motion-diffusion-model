@@ -1,3 +1,5 @@
+import re
+
 from model.mdm import MDM
 from diffusion import gaussian_diffusion as gd
 from diffusion.respace import SpacedDiffusion, space_timesteps
@@ -5,14 +7,15 @@ from utils.parser_util import get_cond_mode
 
 
 def load_model_wo_clip(model, state_dict):
+    # state_dict = {re.sub('^model.(model.)?', '', key): value for key, value in state_dict['state_dict'].items()}
     missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
     assert len(unexpected_keys) == 0
     assert all([k.startswith('clip_model.') for k in missing_keys])
 
 
 def create_model_and_diffusion(args, data):
-    model = MDM(**get_model_args(args, data))
     diffusion = create_gaussian_diffusion(args)
+    model = MDM(**get_model_args(args, data), diffusion=diffusion)
     return model, diffusion
 
 
@@ -48,10 +51,14 @@ def get_model_args(args, data):
         data_rep = 'interhuman'
         njoints = 262 * 2
         nfeats = 1
+    elif args.dataset == 'interhuman_matrix':
+        data_rep = 'interhuman'
+        njoints = 262 * 2 + 25
+        nfeats = 1
 
     return {'modeltype': '', 'njoints': njoints, 'nfeats': nfeats, 'num_actions': num_actions,
             'translation': True, 'pose_rep': 'rot6d', 'glob': True, 'glob_rot': True,
-            'latent_dim': args.latent_dim, 'ff_size': 1024, 'num_layers': args.layers, 'num_heads': 4,
+            'latent_dim': args.latent_dim, 'ff_size': args.ff_size, 'num_layers': args.layers, 'num_heads': 4,
             'dropout': 0.1, 'activation': "gelu", 'data_rep': data_rep, 'cond_mode': cond_mode,
             'cond_mask_prob': args.cond_mask_prob, 'action_emb': action_emb, 'arch': args.arch,
             'emb_trans_dec': args.emb_trans_dec, 'clip_version': clip_version, 'dataset': args.dataset}
@@ -60,7 +67,7 @@ def get_model_args(args, data):
 def create_gaussian_diffusion(args):
     # default params
     predict_xstart = True  # we always predict x_start (a.k.a. x0), that's our deal!
-    steps = args.diffusion_steps
+    steps = 100 # args.diffusion_steps
     scale_beta = 1.  # no scaling
     timestep_respacing = ''  # can be used for ddim sampling, we don't use it.
     learn_sigma = False

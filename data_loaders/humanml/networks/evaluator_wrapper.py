@@ -217,7 +217,7 @@ class EvaluatorIntergenWrapper(object):
     # Please note that the results does not following the order of inputs
     def get_co_embeddings(self, batch_data):
         with torch.no_grad():
-            name, text, motion1, motion2, motion_lens = batch_data
+            name, text, motion1, motion2, motion_lens, _ = batch_data
             motion1 = motion1.detach().float()  # .to(self.device)
             motion2 = motion2.detach().float()  # .to(self.device)
             motions = torch.cat([motion1, motion2], dim=-1)
@@ -248,7 +248,7 @@ class EvaluatorIntergenWrapper(object):
     # Please note that the results does not following the order of inputs
     def get_motion_embeddings(self, batch_data):
         with torch.no_grad():
-            name, text, motion1, motion2, motion_lens = batch_data
+            name, text, motion1, motion2, motion_lens, _ = batch_data
             motion1 = motion1.detach().float()  # .to(self.device)
             motion2 = motion2.detach().float()  # .to(self.device)
             motions = torch.cat([motion1, motion2], dim=-1)
