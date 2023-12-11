@@ -17,10 +17,12 @@ def main():
     args = train_args()
     fixseed(args.seed)
     train_platform_type = eval(args.train_platform_type)
-    resume = args.resume_checkpoint != ''
+    # resume = args.resume_checkpoint != ''
     train_platform = train_platform_type(args.save_dir,
-                                         experiment_name=args.experiment_name, resume=resume,
-                                         lr=args.lr, batch_size=args.batch_size)
+                                         experiment_name=args.experiment_name,
+                                         lr=args.lr, batch_size=args.batch_size,
+                                         architecture=args.arch, latent=args.latent_dim)
+
     train_platform.report_args(args, name='Args')
 
     if args.save_dir is None:

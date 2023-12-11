@@ -110,6 +110,7 @@ def main():
         # add CFG scale to batch
         if args.guidance_param != 1:
             model_kwargs['y']['scale'] = torch.ones(args.batch_size, device=dist_util.dev()) * args.guidance_param
+        model_kwargs['y'] = {key: val.to(dist_util.dev()) if torch.is_tensor(val) else val for key, val in model_kwargs['y'].items()}
 
         sample_fn = diffusion.p_sample_loop
 
@@ -117,7 +118,7 @@ def main():
         sample = sample_fn(
             model,
             # (args.batch_size, model.njoints, model.nfeats, n_frames),  # BUG FIX - this one caused a mismatch between training and inference
-            (args.batch_size, model.njoints, model.nfeats, max_frames),  # BUG FIX
+            (args.batch_size, model.njoints, model.nfeats, n_frames),  # BUG FIX
             clip_denoised=False,
             model_kwargs=model_kwargs,
             skip_timesteps=0,  # 0 is the default value - i.e. don't skip any step
@@ -137,7 +138,7 @@ def main():
         elif model.data_rep == 'interhuman':
             n_joints = 22
             xyz_features = 3
-            sample = sample.reshape(args.batch_size, 2, -1, max_frames)
+            sample = sample.reshape(args.batch_size, 2, -1, n_frames)
             sample = normalizer.backward(sample.cpu().permute(0, 1, 3, 2))
             sample = sample.permute(0, 1, 3, 2)[..., :n_joints * xyz_features, :]
             # sample = sample[..., :n_joints * xyz_features, :]
@@ -145,7 +146,7 @@ def main():
             n_joints = 22
             xyz_features = 3
             # import ipdb;ipdb.set_trace()
-            sample = sample.reshape(args.batch_size, 1, -1, max_frames)
+            sample = sample.reshape(args.batch_size, 1, -1, n_frames)
             # sample = normalizer.backward(sample.cpu().permute(0, 1, 3, 2))  # TODO: Use only half of that normaliser
             sample = sample[..., :n_joints * xyz_features, :]
             # sample = sample[..., :n_joints * xyz_features, :]

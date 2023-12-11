@@ -1330,8 +1330,6 @@ class GaussianDiffusion:
 
         mask = model_kwargs['y']['mask']  # TODO: Mask is probably the lotion's length! not the condition. and so while calculating loss we need the mask.
 
-        if model_kwargs is None:
-            model_kwargs = {}
         if noise is None:
             noise = th.randn_like(x_start)
         x_t = self.q_sample(x_start, t, noise=noise)

@@ -9,14 +9,12 @@ from data_loaders.tensors import collate
 
 
 class MDM(nn.Module):
-    def __init__(self, modeltype, njoints, nfeats, num_actions, translation, pose_rep, glob, glob_rot,
+    def __init__(self, njoints, nfeats, num_actions, translation, pose_rep, glob, glob_rot,
                  latent_dim=256, ff_size=1024, num_layers=8, num_heads=4, dropout=0.1,
-                 ablation=None, activation="gelu", legacy=False, data_rep='rot6d', dataset='amass', clip_dim=512,
-                 arch='trans_enc', emb_trans_dec=False, clip_version=None, **kargs):
+                 ablation=None, activation="gelu", data_rep='rot6d', dataset='amass', clip_dim=512,
+                 arch='trans_enc', emb_trans_dec=False, clip_version=None, diffusion=None, **kargs):
         super().__init__()
 
-        self.legacy = legacy
-        self.modeltype = modeltype
         self.njoints = njoints
         self.nfeats = nfeats
         self.num_actions = num_actions
@@ -52,6 +50,8 @@ class MDM(nn.Module):
 
         self.sequence_pos_encoder = PositionalEncoding(self.latent_dim, self.dropout)
         self.emb_trans_dec = emb_trans_dec
+
+        self.diffusion = diffusion
 
         if self.arch == 'trans_enc':
             print("TRANS_ENC init")
@@ -147,8 +147,6 @@ class MDM(nn.Module):
         bs, njoints, nfeats, nframes = x.shape
         emb = self.embed_timestep(timesteps)  # [1, bs, d]
 
-        # import ipdb;ipdb.set_trace()
-
         force_mask = y.get('uncond', False)
         if 'text' in self.cond_mode:
             enc_text = self.encode_text(y['text'])
@@ -165,12 +163,17 @@ class MDM(nn.Module):
             x = torch.cat((x_reshaped, emb_gru), axis=1)  #[bs, d+joints*feat, 1, #frames]
 
         x = self.input_process(x)
+        mask = torch.logical_not(y['mask'].squeeze(1).squeeze(1)) # b x seqlen
 
         if self.arch == 'trans_enc':
             # adding the timestep embed
             xseq = torch.cat((emb, x), axis=0)  # [seqlen+1, bs, d]
             xseq = self.sequence_pos_encoder(xseq)  # [seqlen+1, bs, d]
-            output = self.seqTransEncoder(xseq)[1:]  # , src_key_padding_mask=~maskseq)  # [seqlen, bs, d]
+
+            step_mask = torch.zeros((bs, 1), dtype=torch.bool, device=x.device)
+            mask = torch.cat([step_mask, mask], dim=1) # b x seqlen + 1
+            output = self.seqTransEncoder(xseq, src_key_padding_mask=mask)[1:]  # , src_key_padding_mask=~maskseq)  # [seqlen, bs, d]
+            # output = self.seqTransEncoder(xseq)[1:]  # , src_key_padding_mask=~maskseq)  # [seqlen, bs, d]
 
         elif self.arch == 'trans_dec':
             if self.emb_trans_dec:
@@ -182,6 +185,7 @@ class MDM(nn.Module):
                 output = self.seqTransDecoder(tgt=xseq, memory=emb)[1:] # [seqlen, bs, d] # FIXME - maybe add a causal mask
             else:
                 output = self.seqTransDecoder(tgt=xseq, memory=emb)
+
         elif self.arch == 'gru':
             xseq = x
             xseq = self.sequence_pos_encoder(xseq)  # [seqlen, bs, d]
@@ -200,13 +204,8 @@ class MDM(nn.Module):
         super().train(*args, **kwargs)
         self.rot2xyz.smpl_model.train(*args, **kwargs)
 
-    def forward_test(self, batch, diffusion):
-        # cond = batch["cond"]
-        # # x_start = batch["motions"]
-        # B = cond.shape[0]
-        # T = batch["motion_lens"][0]
-
-        # import ipdb;ipdb.set_trace()
+    def forward_test(self, batch):
+        assert self.diffusion != None
 
         batch_size = len(batch['text'])
         n_frames = batch['motion_lens'][0]
@@ -214,9 +213,10 @@ class MDM(nn.Module):
         # batch_size, n_joints, n_features, n_frames = x.shape[0]
         collate_args = [{'inp': torch.zeros(n_frames), 'text': batch['text'][0], 'tokens': None, 'lengths': n_frames}] * batch_size
         _, model_kwargs = collate(collate_args)
+        device = next(self.parameters()).device
+        model_kwargs['y'] = {key: val.to(device) if torch.is_tensor(val) else val for key, val in model_kwargs['y'].items()}
 
-        sample_fn = diffusion.p_sample_loop
-        sample = sample_fn(
+        sample = self.diffusion.p_sample_loop(
             self,
             # (args.batch_size, model.njoints, model.nfeats, n_frames),  # BUG FIX - this one caused a mismatch between training and inference
             (batch_size, self.njoints, self.nfeats, n_frames),  # BUG FIX
@@ -224,7 +224,7 @@ class MDM(nn.Module):
             model_kwargs=model_kwargs,
             skip_timesteps=0,  # 0 is the default value - i.e. don't skip any step
             init_image=None,
-            progress=True,
+            progress=False,
             dump_steps=None,
             noise=None,
             const_noise=False,
@@ -285,7 +285,7 @@ class InputProcess(nn.Module):
         bs, njoints, nfeats, nframes = x.shape
         x = x.permute((3, 0, 1, 2)).reshape(nframes, bs, njoints*nfeats)
 
-        if self.data_rep in ['rot6d', 'xyz', 'hml_vec', 'interhuman', 'interhuman_solo']:
+        if self.data_rep in ['rot6d', 'xyz', 'hml_vec'] or 'interhuman' in self.data_rep:
             x = self.poseEmbedding(x)  # [seqlen, bs, d]
             return x
         elif self.data_rep == 'rot_vel':
@@ -312,7 +312,7 @@ class OutputProcess(nn.Module):
 
     def forward(self, output):
         nframes, bs, d = output.shape
-        if self.data_rep in ['rot6d', 'xyz', 'hml_vec', 'interhuman', 'interhuman_solo']:
+        if self.data_rep in ['rot6d', 'xyz', 'hml_vec'] or 'interhuman' in self.data_rep:
             output = self.poseFinal(output)  # [seqlen, bs, 150]
         elif self.data_rep == 'rot_vel':
             first_pose = output[[0]]  # [1, bs, d]

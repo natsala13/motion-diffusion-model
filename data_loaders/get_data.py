@@ -1,7 +1,7 @@
 from torch.utils.data import DataLoader
 
 from data_loaders.tensors import collate as all_collate, t2m_collate
-from data_loaders.interhuman.interhuman import InterHumanDataset, interhuman_collate, interhuman_couple_collate
+from data_loaders.interhuman.interhuman import InterHumanDataset, interhuman_collate, interhuman_couple_collate, interaction_matrix_collate
 
 
 def get_dataset_class(name):
@@ -20,7 +20,7 @@ def get_dataset_class(name):
     elif name == "kit":
         from data_loaders.humanml.data.dataset import KIT
         return KIT
-    elif name == "interhuman" or name == 'interhuman_solo':
+    elif 'interhuman' in name:
         return InterHumanDataset
     else:
         raise ValueError(f'Unsupported dataset name [{name}]')
@@ -35,6 +35,8 @@ def get_collate_fn(name, hml_mode='train'):
         return interhuman_couple_collate
     elif name == 'interhuman_solo':
         return interhuman_collate
+    elif name == 'interhuman_matrix':
+        return interaction_matrix_collate
     else:
         return all_collate
 
@@ -53,7 +55,7 @@ def get_dataset_loader(name, batch_size, num_frames, split='train', hml_mode='tr
     collate = get_collate_fn(name, hml_mode)
 
     loader = DataLoader(
-        dataset, batch_size=batch_size, shuffle=False, drop_last=True, collate_fn=collate
-    )
+        dataset, batch_size=batch_size, shuffle=True,
+        drop_last=True, num_workers=8, collate_fn=collate)
 
     return loader

@@ -3,7 +3,9 @@ import random
 from os.path import join as pjoin
 
 import torch
+import einops
 import numpy as np
+from numpy.linalg import norm
 from tqdm import tqdm
 from torch.utils import data 
 
@@ -11,6 +13,14 @@ from data_loaders.humanml.common.quaternion import qmul_np, qinv_np, qrot_np
 from utils.intergen_utils import load_motion, process_motion_np, rigid_transform
 from data_loaders.tensors import collate
  
+
+NAMES = ['Hips', 'RightUpLeg', 'LeftUpLeg', 'Spine', 'RightLeg', 'LeftLeg', 'Spine1',
+        'RightFoot', 'LeftFoot', 'Spine2', 'RightToe', 'LeftToe', 'Neck',
+        'RightShoulder', 'LeftShoulder', 'Head', 'RightArm', 'LeftArm', 
+        'RightForeArm', 'LeftForeArm', 'LeftHand', 'RightHand' ]
+
+MINIMAL_NAMES = ['Head', 'LeftHand', 'RightHand', 'LeftLeg', 'RightLeg']
+
 
 class InterHumanDataset(data.Dataset):
     def __init__(self, split, datapath='../InterGen/data/interhuman/', num_frames=-1, **kwargs):
@@ -170,6 +180,8 @@ class InterHumanDataset(data.Dataset):
 
         gt_motion1 = self.normalizer.forward(motion1)
         gt_motion2 = self.normalizer.forward(motion2)
+        
+        distance_matrix = self.distance_matrix(gt_motion1, gt_motion2)
 
         gt_length = len(gt_motion1)
         if gt_length < self.max_gt_length:
@@ -178,7 +190,9 @@ class InterHumanDataset(data.Dataset):
             padding_zeros = np.zeros((padding_len, D))
             gt_motion1 = np.concatenate((gt_motion1, padding_zeros), axis=0)
             gt_motion2 = np.concatenate((gt_motion2, padding_zeros), axis=0)
-
+            distance_matrix = np.concatenate((distance_matrix,
+                                               np.zeros((padding_len,
+                                                          distance_matrix.shape[1]))), axis=0)
 
         assert len(gt_motion1) == self.max_gt_length
         assert len(gt_motion2) == self.max_gt_length
@@ -186,8 +200,23 @@ class InterHumanDataset(data.Dataset):
         if np.random.rand() > 0.5:
             gt_motion1, gt_motion2 = gt_motion2, gt_motion1
 
-        return name, text, gt_motion1, gt_motion2, gt_length
-        # return gt_motion1, text
+        return name, text, gt_motion1, gt_motion2, gt_length, distance_matrix
+
+    @staticmethod
+    def distance_matrix(motion1: np.ndarray, motion2: np.ndarray) -> np.ndarray:
+        order = [NAMES.index(edge) for edge in MINIMAL_NAMES]
+        num_joints = len(NAMES)
+        motion1 = motion1[:, :num_joints * 3].reshape(-1, num_joints, 3)[:, order]
+        motion2 = motion2[:, :num_joints * 3].reshape(-1, num_joints, 3)[:, order]
+
+        num_joints = len(MINIMAL_NAMES)
+        motion1_extend = einops.repeat(motion1, 'b n f -> b (c n) f', c=num_joints)
+        motion2_extend = einops.repeat(motion2, 'b n f -> b (n c) f', c=num_joints)
+
+        distance = motion1_extend - motion2_extend
+        distance_matrix = norm(distance, axis=-1)
+
+        return distance_matrix
 
     def shape(self):
         pass
@@ -210,9 +239,20 @@ def interhuman_collate(batch):
     } for b in batch]
     return collate(adapted_batch)
 
+
 def interhuman_couple_collate(batch):
     adapted_batch = [{
         'inp': torch.tensor(np.concatenate((b[2], b[3]), axis=1).T).float().unsqueeze(1), # [seqlen, J] -> [J, 1, seqlen]
+        'text': b[1],
+        'lengths': b[4],
+        'tokens': b[1]  # For compatability reasons
+    } for b in batch]
+    return collate(adapted_batch)
+
+
+def interaction_matrix_collate(batch):
+    adapted_batch = [{
+        'inp': torch.tensor(np.concatenate((b[2], b[3], b[5]), axis=1).T).float().unsqueeze(1), # [seqlen, J] -> [J, 1, seqlen]
         'text': b[1],
         'lengths': b[4],
         'tokens': b[1]  # For compatability reasons

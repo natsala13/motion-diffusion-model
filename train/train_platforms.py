@@ -50,14 +50,15 @@ class NoPlatform(TrainPlatform):
     pass
 
 class WandBPlatform(TrainPlatform):
-    def __init__(self, save_dir, experiment_name='mdm couple experiment', resume=False, **config):
-        print(f'{"Starting new" if not resume else "Resuming"} experiment {experiment_name} ')
+    def __init__(self, save_dir, experiment_name='mdm couple experiment', **config):
+        print(f'Starting  experiment {experiment_name}')
         super().__init__(save_dir)
         wandb.init(
-                project='mdm', 
+                project='mdm',
+                id=experiment_name,
                 # We pass a run name (otherwise it’ll be randomly assigned, like sunshine-lollypop-10)
                 name=experiment_name,
-                resume=False,
+                resume='allow',
                 config=config)
 
     def report_scalar(self, name, value, iteration, group_name=None):
