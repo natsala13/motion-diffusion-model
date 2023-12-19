@@ -68,7 +68,7 @@ def main():
     args.batch_size = args.num_samples  # Sampling a single batch from the testset, with exactly args.num_samples
 
     print('Loading dataset...')
-    data = load_dataset(args, max_frames, n_frames)
+    # data = load_dataset(args, max_frames, n_frames)
     normalizer = InterGenNormalizer()
     total_num_samples = args.num_samples * args.num_repetitions
 
@@ -112,12 +112,8 @@ def main():
             model_kwargs['y']['scale'] = torch.ones(args.batch_size, device=dist_util.dev()) * args.guidance_param
         model_kwargs['y'] = {key: val.to(dist_util.dev()) if torch.is_tensor(val) else val for key, val in model_kwargs['y'].items()}
 
-        sample_fn = diffusion.p_sample_loop
-
-
-        sample = sample_fn(
+        sample = diffusion.p_sample_loop(
             model,
-            # (args.batch_size, model.njoints, model.nfeats, n_frames),  # BUG FIX - this one caused a mismatch between training and inference
             (args.batch_size, model.njoints, model.nfeats, n_frames),  # BUG FIX
             clip_denoised=False,
             model_kwargs=model_kwargs,

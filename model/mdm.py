@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+from torch import Tensor
 import torch.nn as nn
 import torch.nn.functional as F
 import clip
@@ -7,6 +8,9 @@ from model.rotation2xyz import Rotation2xyz
 
 from data_loaders.tensors import collate
 
+from model.transformer_attention import AttentionStoreTransformerEncoder, AttentionStoreTransformerEncoderLayer
+
+import matplotlib.pyplot as plt
 
 class MDM(nn.Module):
     def __init__(self, njoints, nfeats, num_actions, translation, pose_rep, glob, glob_rot,
@@ -63,6 +67,14 @@ class MDM(nn.Module):
 
             self.seqTransEncoder = nn.TransformerEncoder(seqTransEncoderLayer,
                                                          num_layers=self.num_layers)
+            # seqTransEncoderLayer = AttentionStoreTransformerEncoderLayer(d_model=self.latent_dim,
+            #                                                   nhead=self.num_heads,
+            #                                                   dim_feedforward=self.ff_size,
+            #                                                   dropout=self.dropout,
+            #                                                   activation=self.activation)
+
+            # self.seqTransEncoder = AttentionStoreTransformerEncoder(seqTransEncoderLayer,
+            #                                              num_layers=self.num_layers)
         elif self.arch == 'trans_dec':
             print("TRANS_DEC init")
             seqTransDecoderLayer = nn.TransformerDecoderLayer(d_model=self.latent_dim,
@@ -173,7 +185,10 @@ class MDM(nn.Module):
             step_mask = torch.zeros((bs, 1), dtype=torch.bool, device=x.device)
             mask = torch.cat([step_mask, mask], dim=1) # b x seqlen + 1
             output = self.seqTransEncoder(xseq, src_key_padding_mask=mask)[1:]  # , src_key_padding_mask=~maskseq)  # [seqlen, bs, d]
-            # output = self.seqTransEncoder(xseq)[1:]  # , src_key_padding_mask=~maskseq)  # [seqlen, bs, d]
+
+            # output, attention = self.seqTransEncoder(xseq, src_key_padding_mask=mask)  # , src_key_padding_mask=~maskseq)  # [seqlen, bs, d]
+            # output = output[1:]
+            # self.save_attention_matrices(attention, timesteps[0])
 
         elif self.arch == 'trans_dec':
             if self.emb_trans_dec:
@@ -185,6 +200,7 @@ class MDM(nn.Module):
                 output = self.seqTransDecoder(tgt=xseq, memory=emb)[1:] # [seqlen, bs, d] # FIXME - maybe add a causal mask
             else:
                 output = self.seqTransDecoder(tgt=xseq, memory=emb)
+
 
         elif self.arch == 'gru':
             xseq = x
@@ -232,6 +248,17 @@ class MDM(nn.Module):
 
         return {'output': sample.permute(0, 3, 1, 2)}
     
+    @staticmethod
+    def save_attention_matrices(attention, timestemp: int):
+        if timestemp % 10 != 0:
+            return
+        
+        print(f'Saving Attention figure at timestep {timestemp}')
+        for i, att in enumerate(attention):
+            # np.save(f'attention/attention_t{timestemp}_l{i}.npy', att[0].detach().cpu().numpy())
+            plt.imshow(att[0].detach().cpu().numpy())
+            plt.savefig(f'attention/attention_t{timestemp}_l{i}.png')
+
 
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, dropout=0.1, max_len=5000):

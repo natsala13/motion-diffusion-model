@@ -322,13 +322,6 @@ def profile(n):
 # ================================================================
 
 
-def get_current():
-    if Logger.CURRENT is None:
-        _configure_default_logger()
-
-    return Logger.CURRENT
-
-
 class Logger(object):
     DEFAULT = None  # A logger with no output files. (See right below class definition)
     # So that you can still log to the terminal without setting up any output files
@@ -398,6 +391,13 @@ class Logger(object):
         for fmt in self.output_formats:
             if isinstance(fmt, SeqWriter):
                 fmt.writeseq(map(str, args))
+
+
+def get_current() -> Logger:
+    if Logger.CURRENT is None:
+        _configure_default_logger()
+
+    return Logger.CURRENT
 
 
 def get_rank_without_mpi_import():
