@@ -23,7 +23,8 @@ MINIMAL_NAMES = ['Head', 'LeftHand', 'RightHand', 'LeftLeg', 'RightLeg']
 
 
 class InterHumanDataset(data.Dataset):
-    def __init__(self, split, datapath='../InterGen/data/interhuman/', num_frames=-1, **kwargs):
+    def __init__(self, split, datapath='../InterGen/data/interhuman/',
+                  num_frames=-1, normalize=True, **kwargs):
         self.dataname = 'intergen'
         self.max_cond_length = 1
         self.min_cond_length = 1
@@ -33,6 +34,7 @@ class InterHumanDataset(data.Dataset):
         self.max_length = self.max_cond_length + self.max_gt_length -1
         self.min_length = self.min_cond_length + self.min_gt_length -1
 
+        self.normalize = normalize
         self.normalizer = InterGenNormalizer()
 
         # self.motion_rep = global
@@ -63,7 +65,7 @@ class InterHumanDataset(data.Dataset):
             except Exception as e:
                 print(e)
 
-        random.shuffle(data_list)
+        # random.shuffle(data_list)
         data_list = [int(file[:-1]) for file in data_list]
         # data_list = data_list[:70]
 
@@ -178,8 +180,10 @@ class InterHumanDataset(data.Dataset):
         motion2 = rigid_transform(relative, motion2)
 
 
-        gt_motion1 = self.normalizer.forward(motion1)
-        gt_motion2 = self.normalizer.forward(motion2)
+        gt_motion1, gt_motion2 = motion1, motion2
+        if self.normalize:
+            gt_motion1, gt_motion2 = map(self.normalizer.forward, [gt_motion1, gt_motion2])
+            
         
         distance_matrix = self.distance_matrix(gt_motion1, gt_motion2)
 

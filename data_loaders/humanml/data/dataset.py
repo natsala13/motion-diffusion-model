@@ -222,7 +222,7 @@ class Text2MotionDatasetV2(data.Dataset):
 
         new_name_list = []
         length_list = []
-        for name in tqdm(id_list[:100]):
+        for name in tqdm(id_list):
             try:
                 motion = np.load(pjoin(opt.motion_dir, name + '.npy'))
                 if (len(motion)) < min_motion_len or (len(motion) >= 200):

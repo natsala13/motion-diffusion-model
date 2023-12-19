@@ -7,10 +7,15 @@ from datetime import datetime
 from data_loaders.humanml.motion_loaders.model_motion_loaders import get_mdm_loader  # get_motion_loader
 from data_loaders.humanml.utils.metrics import *
 from data_loaders.humanml.networks.evaluator_wrapper import EvaluatorMDMWrapper, EvaluatorIntergenWrapper
-from collections import OrderedDict
 from data_loaders.humanml.scripts.motion_process import *
 from data_loaders.humanml.utils.utils import *
 from utils.model_util import create_model_and_diffusion, load_model_wo_clip
+
+# from data_loaders.humanml.utils.metrics import calculate_activation_statistics, calculate_frechet_distance
+from collections import OrderedDict
+# import torch
+# from tqdm import tqdm
+# import numpy as np
 
 from diffusion import logger
 from utils import dist_util
@@ -35,6 +40,11 @@ def evaluate_matching_score(eval_wrapper, motion_loaders, file):
         with torch.no_grad():
             for idx, batch in tqdm(enumerate(motion_loader)):
                 text_embeddings, motion_embeddings = eval_wrapper.get_co_embeddings(batch)
+
+                # if motion_loader_name.lower() == 'test':
+                #     print(f'Saving matrix integrgen {idx}')
+                #     np.savez(f'debug/embeddings/intergen_batch{idx}_motion.npz', motion1=batch[2], motion2=batch[3], text_embeddings=text_embeddings.cpu().numpy(), motion_embeddings=motion_embeddings.cpu().numpy())
+
                 # print(text_embeddings.shape)
                 # print(motion_embeddings.shape)
                 dist_mat = euclidean_distance_matrix(text_embeddings.cpu().numpy(),
@@ -88,7 +98,9 @@ def evaluate_fid(eval_wrapper, groundtruth_loader, activation_dict, file):
     # print(gt_mu)
     for model_name, motion_embeddings in activation_dict.items():
         mu, cov = calculate_activation_statistics(motion_embeddings)
-        # print(mu)
+        
+        # np.savez(f'debug/{model_name}_fid.npz', gt_mu=gt_mu, gt_cov=gt_cov, mu=mu, cov=cov) 
+
         fid = calculate_frechet_distance(gt_mu, gt_cov, mu, cov)
         print(f'---> [{model_name}] FID: {fid:.4f}')
         print(f'---> [{model_name}] FID: {fid:.4f}', file=file, flush=True)

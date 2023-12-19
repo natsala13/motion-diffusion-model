@@ -110,7 +110,7 @@ class TrainLoop:
             }
         elif 'interhuman' in args.dataset :
             # self.eval_gt_data, gt_dataset = get_dataset_motion_loader(split='test')
-            gt_dataset = InterHumanDataset(split='test', num_frames=args.num_frames)
+            gt_dataset = InterHumanDataset(split='test', normalize=False) ## , num_frames=args.num_frames)
             self.eval_gt_data = DataLoader(gt_dataset, batch_size=args.eval_batch_size,
                                            shuffle=True, num_workers=0, drop_last=True)
 
@@ -175,7 +175,7 @@ class TrainLoop:
                         else:
                             self.train_platform.report_scalar(name=k, value=v, iteration=self.step + self.resume_step, group_name='Loss')
 
-                if self.step % self.save_interval == 0:
+                if self.step > 0 and self.step % self.save_interval == 0:
                     self.save()
                     self.model.eval()
                     self.evaluate()
@@ -206,16 +206,22 @@ class TrainLoop:
             eval_dict = eval_intergen.evaluation(
                 self.eval_wrapper, self.eval_gt_data, self.eval_data, log_file,
                 replication_times=1, diversity_times=diversity_times, mm_num_times=mm_num_times, run_mm=False)
-            print(eval_dict)
-            for k, v in eval_dict.items():
-                if k.startswith('R_precision'):
-                    for i in range(len(v)):
-                        self.train_platform.report_scalar(name=f'top{i + 1}_' + k, value=v[i],
-                                                          iteration=self.step + self.resume_step,
-                                                          group_name='Eval')
-                else:
-                    self.train_platform.report_scalar(name=k, value=v, iteration=self.step + self.resume_step,
-                                                      group_name='Eval')
+            # print(eval_dict)
+
+            metrices_to_report = ['FID_test', 'Diversity_test', 'MM Distance_test']
+            for k, v in {key: eval_dict[key] for key in metrices_to_report}.items():
+                self.train_platform.report_scalar(name=k, value=v,
+                                                   iteration=self.step + self.resume_step,
+                                                     group_name='Eval')
+            # for k, v in eval_dict.items():
+            #     if k.startswith('R_precision'):
+            #         for i in range(len(v)):
+            #             self.train_platform.report_scalar(name=f'top{i + 1}_' + k, value=v[i],
+            #                                               iteration=self.step + self.resume_step,
+            #                                               group_name='Eval')
+            #     else:
+            #         self.train_platform.report_scalar(name=k, value=v, iteration=self.step + self.resume_step,
+            #                                           group_name='Eval')
 
         elif self.dataset in ['humanact12', 'uestc']:
             eval_args = SimpleNamespace(num_seeds=self.args.eval_rep_times, num_samples=self.args.eval_num_samples,

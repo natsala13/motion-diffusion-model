@@ -1,6 +1,7 @@
 import numpy as np
 from scipy import linalg
 
+INTERGEN_EMB_SCALE = 6
 
 # (X - X_train)*(X - X_train) = -2X*X_train + X*X + X_train*X_train
 def euclidean_distance_matrix(matrix1, matrix2):
@@ -65,6 +66,7 @@ def calculate_activation_statistics(activations):
     -- mu: dim_feat
     -- sigma: dim_feat x dim_feat
     """
+    activations = activations * INTERGEN_EMB_SCALE
     mu = np.mean(activations, axis=0)
     cov = np.cov(activations, rowvar=False)
     return mu, cov
