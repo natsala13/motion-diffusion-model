@@ -1,22 +1,23 @@
-import numpy as np
-import torch
-from torch import Tensor
-import torch.nn as nn
-import torch.nn.functional as F
+from typing import Optional
+
 import clip
+import torch
+import torch.nn as nn
+from torch import Tensor
+import torch.nn.functional as F
+import numpy as np
+import matplotlib.pyplot as plt
+
 from model.rotation2xyz import Rotation2xyz
-
 from data_loaders.tensors import collate
-
 from model.transformer_attention import AttentionStoreTransformerEncoder, AttentionStoreTransformerEncoderLayer
 
-import matplotlib.pyplot as plt
 
 class MDM(nn.Module):
     def __init__(self, njoints, nfeats, num_actions, translation, pose_rep, glob, glob_rot,
                  latent_dim=256, ff_size=1024, num_layers=8, num_heads=4, dropout=0.1,
                  ablation=None, activation="gelu", data_rep='rot6d', dataset='amass', clip_dim=512,
-                 arch='trans_enc', emb_trans_dec=False, clip_version=None, diffusion=None, **kargs):
+                 arch='trans_enc', emb_trans_dec=False, clip_version=None, diffusion=None, window_size=-1, **kargs):
         super().__init__()
 
         self.njoints = njoints
@@ -57,8 +58,9 @@ class MDM(nn.Module):
 
         self.diffusion = diffusion
 
+        self._temporal_mask = self._create_temporal_mask(window_size=window_size, max_sequence=301)  # TODO: Change to param
+
         if self.arch == 'trans_enc':
-            print("TRANS_ENC init")
             seqTransEncoderLayer = nn.TransformerEncoderLayer(d_model=self.latent_dim,
                                                               nhead=self.num_heads,
                                                               dim_feedforward=self.ff_size,
@@ -124,6 +126,26 @@ class MDM(nn.Module):
 
         return clip_model
 
+    @staticmethod
+    def _create_temporal_mask(window_size: int, max_sequence: int, attend_to_condition: bool=True) -> Optional[Tensor]:
+        '''create a mask of size (seq_len, seq_len) where only the window_size diagonal is one'''
+        if window_size < 0:
+            return None
+        
+        window = window_size ** 2
+        temporal_masks = torch.stack([torch.Tensor([(i - j) ** 2 < window 
+                    for i in range(max_sequence)]) for j in range(max_sequence)])
+        
+        if attend_to_condition:
+            # The name is misleading since we are also attenting to the first frame.
+            temporal_masks[:, :2] = 1
+        
+        return temporal_masks.to('cuda')
+    
+    def temporal_mask(self, x: torch.Tensor) -> Optional[Tensor]:
+        if self._temporal_mask is not None:
+            return self._temporal_mask[:x.shape[0], :x.shape[0]]
+
     def mask_cond(self, cond, force_mask=False):
         bs, d = cond.shape
         if force_mask:
@@ -184,7 +206,9 @@ class MDM(nn.Module):
 
             step_mask = torch.zeros((bs, 1), dtype=torch.bool, device=x.device)
             mask = torch.cat([step_mask, mask], dim=1) # b x seqlen + 1
-            output = self.seqTransEncoder(xseq, src_key_padding_mask=mask)[1:]  # , src_key_padding_mask=~maskseq)  # [seqlen, bs, d]
+            
+            temporal_mask = self.temporal_mask(xseq)
+            output = self.seqTransEncoder(xseq, mask=temporal_mask, src_key_padding_mask=mask)[1:]  # , src_key_padding_mask=~maskseq)  # [seqlen, bs, d]
 
             # output, attention = self.seqTransEncoder(xseq, src_key_padding_mask=mask)  # , src_key_padding_mask=~maskseq)  # [seqlen, bs, d]
             # output = output[1:]

@@ -93,6 +93,7 @@ def add_model_options(parser):
     group.add_argument("--unconstrained", action='store_true',
                        help="Model is trained unconditionally. That is, it is constrained by neither text nor action. "
                             "Currently tested on HumanAct12 only.")
+    group.add_argument("--window_size", default=-1, type=int, help='use the feature of local attention with a window of that size.')
 
 
 

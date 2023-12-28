@@ -143,8 +143,6 @@ def plot_3d_motion_interaction(save_path, kinematic_tree, mp_joints, title, figs
     elif len(title_sp) > 10:
         title = '\n'.join([' '.join(title_sp[:10]), ' '.join(title_sp[10:])])
 
-    # import ipdb;ipdb.set_trace()
-
     def init():
         ax.set_xlim3d([-radius / 4, radius / 4])
         ax.set_ylim3d([0, radius / 2])
