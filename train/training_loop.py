@@ -1,14 +1,17 @@
-import copy
-import functools
 import os
 import re
-from os.path import join as pjoin
+import sys
+import copy
 import time
-from types import SimpleNamespace
+import signal
+import functools
+from os.path import join as pjoin
 from functools import partial
+from types import SimpleNamespace
 
 import numpy as np
 import blobfile as bf
+from tqdm import tqdm
 import torch
 from torch.optim import AdamW
 
@@ -16,7 +19,6 @@ from diffusion import logger
 from utils import dist_util
 from diffusion.fp16_util import MixedPrecisionTrainer
 from diffusion.resample import LossAwareSampler, UniformSampler
-from tqdm import tqdm
 from diffusion.resample import create_named_schedule_sampler
 from data_loaders.humanml.networks.evaluator_wrapper import EvaluatorMDMWrapper
 from eval import eval_humanml, eval_humanact12_uestc, eval_intergen
@@ -26,10 +28,8 @@ from data_loaders.get_data import get_dataset_loader
 # Intergen evaluation imports.
 from torch.utils.data import DataLoader
 from data_loaders.interhuman.interhuman import InterHumanDataset
-
 from utils.intergen_eval_utils import get_config, get_intergen_loader
 from data_loaders.humanml.networks.evaluator_wrapper import EvaluatorIntergenWrapper
-# from datasets.evaluator import get_motion_loader
 
 # For ImageNet experiments, this was a good default value.
 # We found that the lg_loss_scale quickly climbed to
@@ -58,7 +58,7 @@ class TrainLoop:
         self.lr_anneal_steps = args.lr_anneal_steps
 
         self.step = 0
-        self.resume_step = 0
+        self._resume_step = 0
         self.global_batch = self.batch_size # * dist.get_world_size()
         self.num_steps = args.num_steps
         self.num_epochs = self.num_steps // len(self.data) + 1
@@ -78,7 +78,7 @@ class TrainLoop:
         self.opt = AdamW(
             self.mp_trainer.master_params, lr=self.lr, weight_decay=self.weight_decay
         )
-        if self.resume_step:
+        if self.resume_step > 0:
             self._load_optimizer_state()
             # Model was resumed, either due to a restart or a checkpoint
             # being specified at the command line.
@@ -110,7 +110,7 @@ class TrainLoop:
             }
         elif 'interhuman' in args.dataset :
             # self.eval_gt_data, gt_dataset = get_dataset_motion_loader(split='test')
-            gt_dataset = InterHumanDataset(split='test', normalize=False) ## , num_frames=args.num_frames)
+            gt_dataset = InterHumanDataset(split='test', normalize=False, num_frames=args.num_frames)
             self.eval_gt_data = DataLoader(gt_dataset, batch_size=args.eval_batch_size,
                                            shuffle=True, num_workers=0, drop_last=True)
 
@@ -130,12 +130,27 @@ class TrainLoop:
 
 
         self.use_ddp = False
+        signal.signal(signal.SIGTERM, self._listen_to_signal_and_save)
+
+    @property
+    def resume_step(self) -> int:
+        return self._resume_step + self.step
+
+    def _listen_to_signal_and_save(self, signal, frame):
+        '''save the model before task is killed...'''
+        if signal == 15:
+            print(f'SIGTERM recieved after {self.resume_step}, saving model gentely...')
+            self.save()
+            print('model saved')
+            self.train_platform.close()
+            print('platform closed, existing...')
+            sys.exit(16)
 
     def _load_and_sync_parameters(self):
         resume_checkpoint = find_resume_checkpoint(self.save_dir) or self.resume_checkpoint
 
         if resume_checkpoint:
-            self.resume_step = parse_resume_step_from_filename(resume_checkpoint)
+            self._resume_step = parse_resume_step_from_filename(resume_checkpoint)
             logger.log(f"loading model from checkpoint: {resume_checkpoint}...")
             state_dict = dist_util.load_state_dict(resume_checkpoint, map_location=dist_util.dev())
             self.model.load_state_dict(state_dict, strict=False)  # Due to Clip's weight that are not saved in checkpoint.
@@ -143,7 +158,7 @@ class TrainLoop:
     def _load_optimizer_state(self):
         main_checkpoint = find_resume_checkpoint(self.save_dir) or self.resume_checkpoint
         opt_checkpoint = bf.join(
-            bf.dirname(main_checkpoint), f"opt{self.resume_step:09}.pt"
+            bf.dirname(main_checkpoint), f"opt{self._resume_step:09}.pt"
         )
         if bf.exists(opt_checkpoint):
             logger.log(f"loading optimizer state from checkpoint: {opt_checkpoint}")
@@ -157,7 +172,7 @@ class TrainLoop:
         for epoch in range(self.num_epochs):
             print(f'Starting epoch {epoch}')
             for motion, cond in tqdm(self.data):
-                if not (not self.lr_anneal_steps or self.step + self.resume_step < self.lr_anneal_steps):
+                if not (not self.lr_anneal_steps or self.resume_step < self.lr_anneal_steps):
                     break
 
                 motion = motion.to(self.device)  # (batch, ch , ? , time), humanml: (64, 263, 1, 196)
@@ -168,14 +183,14 @@ class TrainLoop:
                 if self.step % self.log_interval == 0:  # log_interval: 1000, size(data): 10k, data/batch_size = ~150, --> log every +-6 epochs
                     for k,v in logger.get_current().dumpkvs().items():
                         if k == 'loss':
-                            print('step[{}]: loss[{:0.5f}]'.format(self.step+self.resume_step, v))
+                            print('step[{}]: loss[{:0.5f}]'.format(self.resume_step, v))
 
                         if k in ['step', 'samples'] or '_q' in k:
                             continue
                         else:
-                            self.train_platform.report_scalar(name=k, value=v, iteration=self.step + self.resume_step, group_name='Loss')
+                            self.train_platform.report_scalar(name=k, value=v, iteration=self.resume_step, group_name='Loss')
 
-                if self.step > 0 and self.step % self.save_interval == 0:
+                if self.resume_step > 0 and self.resume_step % self.save_interval == 0:
                     self.save()
                     self.model.eval()
                     self.evaluate()
@@ -186,7 +201,7 @@ class TrainLoop:
                         return
                 self.step += 1
 
-            if not (not self.lr_anneal_steps or self.step + self.resume_step < self.lr_anneal_steps):
+            if not (not self.lr_anneal_steps or self.resume_step < self.lr_anneal_steps):
                 break
         # Save the last checkpoint if it wasn't already saved.
         if (self.step - 1) % self.save_interval != 0:
@@ -200,7 +215,7 @@ class TrainLoop:
 
         if self.eval_wrapper is not None:
             print('Running evaluation loop: [Should take about 90 min]')
-            log_file = os.path.join(self.save_dir, f'eval_interhumam_{(self.step + self.resume_step):09d}.log')
+            log_file = os.path.join(self.save_dir, f'eval_interhumam_{(self.resume_step):09d}.log')
             diversity_times = 300
             mm_num_times = 0  # mm is super slow hence we won't run it during training
             eval_dict = eval_intergen.evaluation(
@@ -211,7 +226,7 @@ class TrainLoop:
             metrices_to_report = ['FID_test', 'Diversity_test', 'MM Distance_test']
             for k, v in {key: eval_dict[key] for key in metrices_to_report}.items():
                 self.train_platform.report_scalar(name=k, value=v,
-                                                   iteration=self.step + self.resume_step,
+                                                   iteration=self.resume_step,
                                                      group_name='Eval')
             # for k, v in eval_dict.items():
             #     if k.startswith('R_precision'):
@@ -289,18 +304,18 @@ class TrainLoop:
     def _anneal_lr(self):
         if not self.lr_anneal_steps:
             return
-        frac_done = (self.step + self.resume_step) / self.lr_anneal_steps
+        frac_done = (self.resume_step) / self.lr_anneal_steps
         lr = self.lr * (1 - frac_done)
         for param_group in self.opt.param_groups:
             param_group["lr"] = lr
 
     def log_step(self):
-        logger.logkv("step", self.step + self.resume_step)
-        logger.logkv("samples", (self.step + self.resume_step + 1) * self.global_batch)
+        logger.logkv("step", self.resume_step)
+        logger.logkv("samples", (self.resume_step + 1) * self.global_batch)
 
 
     def ckpt_file_name(self):
-        return f"model{(self.step+self.resume_step):09d}.pt"
+        return f"model{(self.resume_step):09d}.pt"
 
 
     def save(self):
@@ -320,7 +335,7 @@ class TrainLoop:
         save_checkpoint(self.mp_trainer.master_params)
 
         with bf.BlobFile(
-            bf.join(self.save_dir, f"opt{(self.step+self.resume_step):09d}.pt"),
+            bf.join(self.save_dir, f"opt{(self.resume_step):09d}.pt"),
             "wb",
         ) as f:
             torch.save(self.opt.state_dict(), f)
