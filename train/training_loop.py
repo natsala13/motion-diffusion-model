@@ -130,16 +130,16 @@ class TrainLoop:
 
 
         self.use_ddp = False
-        signal.signal(signal.SIGTERM, self._listen_to_signal_and_save)
+        signal.signal(signal.SIGUSR1, self._listen_to_signal_and_save)
 
     @property
     def resume_step(self) -> int:
         return self._resume_step + self.step
 
-    def _listen_to_signal_and_save(self, signal, frame):
+    def _listen_to_signal_and_save(self, signal_number, frame):
         '''save the model before task is killed...'''
-        if signal == 15:
-            print(f'SIGTERM recieved after {self.resume_step}, saving model gentely...')
+        if signal_number == signal.SIGUSR1:
+            print(f'SIGUSR1 recieved after {self.resume_step}, saving model gentely...')
             self.save()
             print('model saved')
             self.train_platform.close()
