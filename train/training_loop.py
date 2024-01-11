@@ -44,7 +44,7 @@ class TrainLoop:
         self.train_platform = train_platform
         self.model = model
         self.diffusion = diffusion
-        self.cond_mode = model.cond_mode
+        # self.cond_mode = model.cond_mode
         self.data = data
         self.batch_size = args.batch_size
         self.microbatch = args.batch_size  # deprecating this option
@@ -108,7 +108,7 @@ class TrainLoop:
                     args.eval_num_samples, scale=1.,
                 )
             }
-        elif 'interhuman' in args.dataset :
+        elif 'interhuman' in args.dataset and args.eval_during_training:
             # self.eval_gt_data, gt_dataset = get_dataset_motion_loader(split='test')
             gt_dataset = InterHumanDataset(split='test', normalize=False, num_frames=args.num_frames)
             self.eval_gt_data = DataLoader(gt_dataset, batch_size=args.eval_batch_size,

@@ -5,10 +5,16 @@ from torch import Tensor
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
 
 
-
+def assert_padding_type(src_key_padding_mask: Optional[Tensor]):
+    if src_key_padding_mask is not None:
+            _skpm_dtype = src_key_padding_mask.dtype
+            if _skpm_dtype != torch.bool and not torch.is_floating_point(src_key_padding_mask):
+                raise AssertionError(
+                    "only bool and floating types of key_padding_mask are supported")
+            
+            
 class AttentionStoreTransformerEncoderLayer(TransformerEncoderLayer):
-    r"""Should be identical to TransformerEncoderLayer, except that it stores the attention weights.
-    """
+    """Should be identical to TransformerEncoderLayer, except that it stores the attention weights."""
     __constants__ = ['batch_first', 'norm_first']
 
     # def __init__(self, d_model: int, nhead: int, dim_feedforward: int = 2048, dropout: float = 0.1,
@@ -52,99 +58,7 @@ class AttentionStoreTransformerEncoderLayer(TransformerEncoderLayer):
 
     def forward(self, src: Tensor, src_mask: Optional[Tensor] = None,
                 src_key_padding_mask: Optional[Tensor] = None) -> Tuple[Tensor, Tensor]:
-        r"""Pass the input through the encoder layer.
-
-        Args:
-            src: the sequence to the encoder layer (required).
-            src_mask: the mask for the src sequence (optional).
-            src_key_padding_mask: the mask for the src keys per batch (optional).
-
-        Shape:
-            see the docs in Transformer class.
-        """
-
-        if src_key_padding_mask is not None:
-            _skpm_dtype = src_key_padding_mask.dtype
-            if _skpm_dtype != torch.bool and not torch.is_floating_point(src_key_padding_mask):
-                raise AssertionError(
-                    "only bool and floating types of key_padding_mask are supported")
-        # see Fig. 1 of https://arxiv.org/pdf/2002.04745v1.pdf
-        why_not_sparsity_fast_path = ''
-        if not src.dim() == 3:
-            why_not_sparsity_fast_path = f"input not batched; expected src.dim() of 3 but got {src.dim()}"
-        elif self.training:
-            why_not_sparsity_fast_path = "training is enabled"
-        elif not self.self_attn.batch_first :
-            why_not_sparsity_fast_path = "self_attn.batch_first was not True"
-        elif not self.self_attn._qkv_same_embed_dim :
-            why_not_sparsity_fast_path = "self_attn._qkv_same_embed_dim was not True"
-        elif not self.activation_relu_or_gelu:
-            why_not_sparsity_fast_path = "activation_relu_or_gelu was not True"
-        elif not (self.norm1.eps == self.norm2.eps):
-            why_not_sparsity_fast_path = "norm1.eps is not equal to norm2.eps"
-        elif src_mask is not None:
-            why_not_sparsity_fast_path = "src_mask is not supported for fastpath"
-        elif src.is_nested and src_key_padding_mask is not None:
-            why_not_sparsity_fast_path = "src_key_padding_mask is not supported with NestedTensor input for fastpath"
-        elif self.self_attn.num_heads % 2 == 1:
-            why_not_sparsity_fast_path = "num_head is odd"
-        elif torch.is_autocast_enabled():
-            why_not_sparsity_fast_path = "autocast is enabled"
-
-        if not why_not_sparsity_fast_path:
-            tensor_args = (
-                src,
-                self.self_attn.in_proj_weight,
-                self.self_attn.in_proj_bias,
-                self.self_attn.out_proj.weight,
-                self.self_attn.out_proj.bias,
-                self.norm1.weight,
-                self.norm1.bias,
-                self.norm2.weight,
-                self.norm2.bias,
-                self.linear1.weight,
-                self.linear1.bias,
-                self.linear2.weight,
-                self.linear2.bias,
-            )
-
-            # We have to use list comprehensions below because TorchScript does not support
-            # generator expressions.
-            if torch.overrides.has_torch_function(tensor_args):
-                why_not_sparsity_fast_path = "some Tensor argument has_torch_function"
-            elif not all((x.is_cuda or 'cpu' in str(x.device)) for x in tensor_args):
-                why_not_sparsity_fast_path = "some Tensor argument is neither CUDA nor CPU"
-            elif torch.is_grad_enabled() and any(x.requires_grad for x in tensor_args):
-                why_not_sparsity_fast_path = ("grad is enabled and at least one of query or the "
-                                              "input/output projection weights or biases requires_grad")
-
-            if not why_not_sparsity_fast_path:
-                return torch._transformer_encoder_layer_fwd(
-                    src,
-                    self.self_attn.embed_dim,
-                    self.self_attn.num_heads,
-                    self.self_attn.in_proj_weight,
-                    self.self_attn.in_proj_bias,
-                    self.self_attn.out_proj.weight,
-                    self.self_attn.out_proj.bias,
-                    self.activation_relu_or_gelu == 2,
-                    self.norm_first,
-                    self.norm1.eps,
-                    self.norm1.weight,
-                    self.norm1.bias,
-                    self.norm2.weight,
-                    self.norm2.bias,
-                    self.linear1.weight,
-                    self.linear1.bias,
-                    self.linear2.weight,
-                    self.linear2.bias,
-                    # TODO: if src_mask and src_key_padding_mask merge to single 4-dim mask
-                    src_mask if src_mask is not None else src_key_padding_mask,
-                    1 if src_key_padding_mask is not None else
-                    0 if src_mask is not None else
-                    None,
-                ), None
-
+        assert_padding_type(src_key_padding_mask)
 
         x = src
         if self.norm_first:
@@ -174,104 +88,100 @@ class AttentionStoreTransformerEncoderLayer(TransformerEncoderLayer):
 
 
 class AttentionStoreTransformerEncoder(TransformerEncoder):
-    r"""Should be identical to TransformerEncoder, except that it stores the attention weights.
-    """
+    r"""Should be identical to TransformerEncoder, except that it stores the attention weights."""
+
+    def forward(self, src: Tensor, mask: Optional[Tensor] = None, 
+                src_key_padding_mask: Optional[Tensor] = None) -> Tuple[Tensor, List[Tensor]]:
+        assert_padding_type(src_key_padding_mask)
 
 
-    def forward(self, src: Tensor, mask: Optional[Tensor] = None, src_key_padding_mask: Optional[Tensor] = None) -> Tuple[Tensor, List[Tensor]]:
-        r"""Pass the input through the encoder layers in turn.
-
-        Args:
-            src: the sequence to the encoder (required).
-            mask: the mask for the src sequence (optional).
-            src_key_padding_mask: the mask for the src keys per batch (optional).
-
-        Shape:
-            see the docs in Transformer class.
-        """
-        if src_key_padding_mask is not None:
-            _skpm_dtype = src_key_padding_mask.dtype
-            if _skpm_dtype != torch.bool and not torch.is_floating_point(src_key_padding_mask):
-                raise AssertionError(
-                    "only bool and floating types of key_padding_mask are supported")
         output = src
-        convert_to_nested = False
-        first_layer: TransformerEncoderLayer = self.layers[0]
         src_key_padding_mask_for_layers = src_key_padding_mask
-        why_not_sparsity_fast_path = ''
-        str_first_layer = "self.layers[0]"
-        if not isinstance(first_layer, torch.nn.TransformerEncoderLayer):
-            why_not_sparsity_fast_path = f"{str_first_layer} was not TransformerEncoderLayer"
-        elif first_layer.norm_first :
-            why_not_sparsity_fast_path = f"{str_first_layer}.norm_first was True"
-        elif first_layer.training:
-            why_not_sparsity_fast_path = f"{str_first_layer} was in training mode"
-        elif not first_layer.self_attn.batch_first:
-            why_not_sparsity_fast_path = f" {str_first_layer}.self_attn.batch_first was not True"
-        elif not first_layer.self_attn._qkv_same_embed_dim:
-            why_not_sparsity_fast_path = f"{str_first_layer}.self_attn._qkv_same_embed_dim was not True"
-        elif not first_layer.activation_relu_or_gelu:
-            why_not_sparsity_fast_path = f" {str_first_layer}.activation_relu_or_gelu was not True"
-        elif not (first_layer.norm1.eps == first_layer.norm2.eps) :
-            why_not_sparsity_fast_path = f"{str_first_layer}.norm1.eps was not equal to {str_first_layer}.norm2.eps"
-        elif not src.dim() == 3:
-            why_not_sparsity_fast_path = f"input not batched; expected src.dim() of 3 but got {src.dim()}"
-        elif not self.enable_nested_tensor:
-            why_not_sparsity_fast_path = "enable_nested_tensor was not True"
-        elif src_key_padding_mask is None:
-            why_not_sparsity_fast_path = "src_key_padding_mask was None"
-        elif (((not hasattr(self, "mask_check")) or self.mask_check)
-                and not torch._nested_tensor_from_mask_left_aligned(src, src_key_padding_mask.logical_not())):
-            why_not_sparsity_fast_path = "mask_check enabled, and src and src_key_padding_mask was not left aligned"
-        elif output.is_nested:
-            why_not_sparsity_fast_path = "NestedTensor input is not supported"
-        elif mask is not None:
-            why_not_sparsity_fast_path = "src_key_padding_mask and mask were both supplied"
-        elif first_layer.self_attn.num_heads % 2 == 1:
-            why_not_sparsity_fast_path = "num_head is odd"
-        elif torch.is_autocast_enabled():
-            why_not_sparsity_fast_path = "autocast is enabled"
-
-        if not why_not_sparsity_fast_path:
-            tensor_args = (
-                src,
-                first_layer.self_attn.in_proj_weight,
-                first_layer.self_attn.in_proj_bias,
-                first_layer.self_attn.out_proj.weight,
-                first_layer.self_attn.out_proj.bias,
-                first_layer.norm1.weight,
-                first_layer.norm1.bias,
-                first_layer.norm2.weight,
-                first_layer.norm2.bias,
-                first_layer.linear1.weight,
-                first_layer.linear1.bias,
-                first_layer.linear2.weight,
-                first_layer.linear2.bias,
-            )
-
-            if torch.overrides.has_torch_function(tensor_args):
-                why_not_sparsity_fast_path = "some Tensor argument has_torch_function"
-            elif not (src.is_cuda or 'cpu' in str(src.device)):
-                why_not_sparsity_fast_path = "src is neither CUDA nor CPU"
-            elif torch.is_grad_enabled() and any(x.requires_grad for x in tensor_args):
-                why_not_sparsity_fast_path = ("grad is enabled and at least one of query or the "
-                                              "input/output projection weights or biases requires_grad")
-
-            if (not why_not_sparsity_fast_path) and (src_key_padding_mask is not None):
-                convert_to_nested = True
-                output = torch._nested_tensor_from_mask(output, src_key_padding_mask.logical_not(), mask_check=False)
-                src_key_padding_mask_for_layers = None
 
         attention_layers = []
         for mod in self.layers:
             output, attention = mod(output, src_mask=mask, src_key_padding_mask=src_key_padding_mask_for_layers)
             attention_layers.append(attention)            
 
-
-        if convert_to_nested:
-            output = output.to_padded_tensor(0.)
-
         if self.norm is not None:
             output = self.norm(output)
 
         return output, attention_layers
+
+
+            
+class AttentionInjectLayer(TransformerEncoderLayer):
+    """Attention layer which let you inject a second matrix along the K seq dimension."""
+    def forward(self, src: Tensor, inject: Tensor, src_mask: Optional[Tensor] = None,
+                src_key_padding_mask: Optional[Tensor] = None) -> Tensor:
+        assert_padding_type(src_key_padding_mask)
+
+        x = src
+        x_inject = torch.cat((src, inject))
+        if self.norm_first:
+            sa = self._sa_block(self.norm1(x), self.norm1(x_inject), src_mask, src_key_padding_mask)
+            x = x + sa
+            x = x + self._ff_block(self.norm2(x))
+        else:
+            sa = self._sa_block(x, x_inject, src_mask, src_key_padding_mask)
+            x = self.norm1(x + sa)
+            x = self.norm2(x + self._ff_block(x))
+
+        return x
+
+    def _sa_block(self, x: Tensor, x_inject: Tensor, attn_mask: Optional[Tensor],
+                   key_padding_mask: Optional[Tensor]) -> Tensor:
+        x, _ = self.self_attn(x, x_inject, x_inject,  # Q, K, V
+                           attn_mask=attn_mask,
+                           key_padding_mask=key_padding_mask)
+        return self.dropout1(x)
+
+    def _ff_block(self, x: Tensor) -> Tensor:
+        x = self.linear2(self.dropout(self.activation(self.linear1(x))))
+        return self.dropout2(x)
+
+
+class AttentionStoreEmbeddingsTransformerEncoder(TransformerEncoder):
+    """Transformer which store and return all embeddings - No need of special attention layer."""
+
+    def forward(self, src: Tensor, mask: Optional[Tensor] = None,
+                src_key_padding_mask: Optional[Tensor] = None) -> Tuple[Tensor, List[Tensor]]:
+        assert_padding_type(src_key_padding_mask)
+        assert not isinstance(self.layers[0], AttentionInjectLayer)
+
+        output = src
+        src_key_padding_mask_for_layers = src_key_padding_mask
+
+        embedding_layers = [output.detach().clone()]
+        for mod in self.layers:
+            output = mod(output, src_mask=mask, src_key_padding_mask=src_key_padding_mask_for_layers)
+            embedding_layers.append(output.detach().clone())
+
+        if self.norm is not None:
+            output = self.norm(output)
+
+        return output, embedding_layers
+    
+class AttentionInjectEmbeddingsTransformerEncoder(TransformerEncoder):
+    """Transformer which let you inject input from one self encoder to a second one along K, V dimension.
+    Need of an Attention Inject layers."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        assert isinstance(self.layers[0], AttentionInjectLayer)
+    
+    def forward(self, src: Tensor, embeddings: List[Tensor],
+                mask: Optional[Tensor] = None, 
+                src_key_padding_mask: Optional[Tensor] = None) -> Tensor:
+        assert_padding_type(src_key_padding_mask)
+
+        output = src
+        src_key_padding_mask_for_layers = src_key_padding_mask
+
+        for mod, embedding_inject in zip(self.layers, embeddings):
+            output = mod(output, inject=embedding_inject, src_mask=mask,
+                          src_key_padding_mask=src_key_padding_mask_for_layers)
+
+        if self.norm is not None:
+            output = self.norm(output)
+
+        return output

@@ -208,7 +208,7 @@ class MDM(nn.Module):
             mask = torch.cat([step_mask, mask], dim=1) # b x seqlen + 1
             
             temporal_mask = self.temporal_mask(xseq)
-            output = self.seqTransEncoder(xseq, mask=temporal_mask, src_key_padding_mask=mask)[1:]  # , src_key_padding_mask=~maskseq)  # [seqlen, bs, d]
+            output = self.seqTransEncoder(xseq, mask=temporal_mask, src_key_padding_mask=mask)[1:]
 
             # output, attention = self.seqTransEncoder(xseq, src_key_padding_mask=mask)  # , src_key_padding_mask=~maskseq)  # [seqlen, bs, d]
             # output = output[1:]
@@ -317,7 +317,7 @@ class TimestepEmbedder(nn.Module):
             nn.Linear(time_embed_dim, time_embed_dim),
         )
 
-    def forward(self, timesteps):
+    def forward(self, timesteps) -> Tensor:
         return self.time_embed(self.sequence_pos_encoder.pe[timesteps]).permute(1, 0, 2)
 
 

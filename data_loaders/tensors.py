@@ -1,9 +1,26 @@
 import torch
+import einops
+
 
 def lengths_to_mask(lengths, max_len):
     # max_len = max(lengths)
     mask = torch.arange(max_len, device=lengths.device).expand(len(lengths), max_len) < lengths.unsqueeze(1)
     return mask
+
+# def lengths_to_mask(lengths, max_len):
+#     mask1 = torch.arange(max_len, device=lengths.device).expand(len(lengths), max_len) < lengths.unsqueeze(1)
+#     device = lengths.device
+#     # Add 1 for embedding in future...
+#     lengths = [length + 1 for length in lengths]
+#     max_len += 1
+
+#     mask = torch.ones(len(lengths), max_len, max_len, device=device)
+#     for i, length in enumerate(lengths):
+#         mask[i, :length, :length] = 0
+
+#     mask2 = einops.repeat(mask, 'b s1 s2 -> (b heads) s1 s2', heads=4)
+    
+#     return mask1, mask2
     
 
 def collate_tensors(batch):
@@ -31,9 +48,12 @@ def collate(batch):
     databatchTensor = collate_tensors(databatch)
     lenbatchTensor = torch.as_tensor(lenbatch)
     maskbatchTensor = lengths_to_mask(lenbatchTensor, databatchTensor.shape[-1]).unsqueeze(1).unsqueeze(1) # unqueeze for broadcasting
+    # mask1, mask2 = lengths_to_mask(lenbatchTensor, databatchTensor.shape[-1])
+    # mask1 = mask1.unsqueeze(1).unsqueeze(1) # unqueeze for broadcasting
 
     motion = databatchTensor
     cond = {'y': {'mask': maskbatchTensor, 'lengths': lenbatchTensor}}
+    # cond = {'y': {'mask': mask1, 'att_mask': mask2, 'lengths': lenbatchTensor}}
 
     if 'text' in notnone_batches[0]:
         textbatch = [b['text'] for b in notnone_batches]
