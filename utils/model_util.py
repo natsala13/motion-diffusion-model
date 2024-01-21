@@ -1,6 +1,7 @@
 import re
 
 from model.mdm import MDM
+from model.mdm_any import MdmAny, MdmAttend
 from diffusion import gaussian_diffusion as gd
 from diffusion.respace import SpacedDiffusion, space_timesteps
 from utils.parser_util import get_cond_mode
@@ -15,7 +16,13 @@ def load_model_wo_clip(model, state_dict):
 
 def create_model_and_diffusion(args, data):
     diffusion = create_gaussian_diffusion(args)
-    model = MDM(**get_model_args(args, data), diffusion=diffusion)
+    if args.arch == 'mdm_any':
+        model = MdmAny(input_features=262)
+    if args.arch == 'mdm_attend':
+        model = MdmAttend(input_features=263)
+    else:
+        model = MDM(**get_model_args(args, data), diffusion=diffusion)
+
     return model, diffusion
 
 
@@ -53,7 +60,7 @@ def get_model_args(args, data):
         nfeats = 1
     elif args.dataset == 'interhuman_matrix':
         data_rep = 'interhuman'
-        njoints = 262 * 2 + 25
+        njoints = 262 * 2 + 25 # 108
         nfeats = 1
 
     return {'modeltype': '', 'njoints': njoints, 'nfeats': nfeats, 'num_actions': num_actions,
@@ -67,7 +74,7 @@ def get_model_args(args, data):
 def create_gaussian_diffusion(args):
     # default params
     predict_xstart = True  # we always predict x_start (a.k.a. x0), that's our deal!
-    steps = 100 # args.diffusion_steps
+    steps = args.diffusion_steps
     scale_beta = 1.  # no scaling
     timestep_respacing = ''  # can be used for ddim sampling, we don't use it.
     learn_sigma = False

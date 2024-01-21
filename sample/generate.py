@@ -3,21 +3,22 @@
 Generate a large batch of image samples from a model and save them as a large
 numpy array. This can be used to produce samples for FID evaluation.
 """
-from utils.fixseed import fixseed
 import os
-import numpy as np
 import torch
+import shutil
+import numpy as np
+
+from utils import dist_util
+from utils.fixseed import fixseed
 from utils.parser_util import generate_args
 from utils.model_util import create_model_and_diffusion, load_model_wo_clip
-from utils import dist_util
 from model.cfg_sampler import ClassifierFreeSampleModel
 from data_loaders.get_data import get_dataset_loader
 from data_loaders.humanml.scripts.motion_process import recover_from_ric
-import data_loaders.humanml.utils.paramUtil as paramUtil
 from data_loaders.humanml.utils.plot_script import plot_3d_motion, plot_3d_motion_interaction
-import shutil
 from data_loaders.tensors import collate
-from data_loaders.interhuman.interhuman import InterGenNormalizer
+from data_loaders.interhuman.interhuman import InterGenNormalizer, HumanMlNormalizer
+import data_loaders.humanml.utils.paramUtil as paramUtil
 
 
 def main():
@@ -68,12 +69,13 @@ def main():
     args.batch_size = args.num_samples  # Sampling a single batch from the testset, with exactly args.num_samples
 
     print('Loading dataset...')
-    data = load_dataset(args, max_frames, n_frames)
-    normalizer = InterGenNormalizer()
+    # data = load_dataset(args, max_frames, n_frames)
+    # data = None
     total_num_samples = args.num_samples * args.num_repetitions
 
     print("Creating model and diffusion...")
-    model, diffusion = create_model_and_diffusion(args, None) # TODO: We don't really needs data just data.dataset.num_actions if existing.
+    model, diffusion = create_model_and_diffusion(args, None)  # TODO: We don't really needs data just data.dataset.num_actions if existing.
+    normalizer = InterGenNormalizer() if 'interhuman' in model.data_rep else HumanMlNormalizer()
 
     print(f"Loading checkpoints from [{args.model_path}]...")
     state_dict = torch.load(args.model_path, map_location='cpu')
@@ -85,6 +87,7 @@ def main():
     model.eval()  # disable random masking
 
     if is_using_data:
+        data = load_dataset(args, max_frames, n_frames)
         iterator = iter(data)  # TODO: Im not sure whats happening here but worst case load data in here.
         _, model_kwargs = next(iterator)
     else:
@@ -128,24 +131,17 @@ def main():
         # Recover XYZ *positions* from HumanML3D vector representation
         if model.data_rep == 'hml_vec':
             n_joints = 22 if sample.shape[1] == 263 else 21
-            sample = data.dataset.t2m_dataset.inv_transform(sample.cpu().permute(0, 2, 3, 1)).float()
+            # sample = data.dataset.t2m_dataset.inv_transform(sample.cpu().permute(0, 2, 3, 1)).float()
+            sample = normalizer.backward(sample.cpu().permute(0, 2, 3, 1)).float()
             sample = recover_from_ric(sample, n_joints)
             sample = sample.view(-1, *sample.shape[2:]).permute(0, 2, 3, 1)  # torch.Size([1, 22, 3, 196])
-        elif model.data_rep == 'interhuman':
+        elif 'interhuman' in model.data_rep:
             n_joints = 22
             xyz_features = 3
-            sample = sample.reshape(args.batch_size, 2, -1, n_frames)
+            number_of_motions = 1 if 'solo' in model.data_rep else 2
+            sample = sample[:, :524].reshape(args.batch_size, number_of_motions, -1, n_frames)
             sample = normalizer.backward(sample.cpu().permute(0, 1, 3, 2))
             sample = sample.permute(0, 1, 3, 2)[..., :n_joints * xyz_features, :]
-            # sample = sample[..., :n_joints * xyz_features, :]
-        elif model.data_rep == 'interhuman_solo':
-            n_joints = 22
-            xyz_features = 3
-            # import ipdb;ipdb.set_trace()
-            sample = sample.reshape(args.batch_size, 1, -1, n_frames)
-            # sample = normalizer.backward(sample.cpu().permute(0, 1, 3, 2))  # TODO: Use only half of that normaliser
-            sample = sample[..., :n_joints * xyz_features, :]
-            # sample = sample[..., :n_joints * xyz_features, :]
 
         rot2xyz_pose_rep = 'xyz' if model.data_rep in ['xyz', 'hml_vec', 'interhuman', 'interhuman_solo']  else model.data_rep
         rot2xyz_mask = None if rot2xyz_pose_rep == 'xyz' else model_kwargs['y']['mask'].reshape(args.batch_size, n_frames).bool()
@@ -202,8 +198,9 @@ def main():
             save_file = sample_file_template.format(sample_i, rep_i)
             print(sample_print_template.format(caption, sample_i, rep_i, save_file))
             animation_save_path = os.path.join(out_path, save_file)
-            if args.dataset == 'interhuman':
-                motion = motion.transpose(1, 0, 2).reshape(2, length, n_joints, xyz_features)
+            if 'interhuman' in args.dataset:
+                n_motions = motion.shape[1]
+                motion = motion.transpose(1, 0, 2).reshape(n_motions, length, n_joints, xyz_features)
                 plot_3d_motion_interaction(animation_save_path, skeleton, motion, title=caption, fps=fps)    
             else:
                 plot_3d_motion(animation_save_path, skeleton, motion, dataset=args.dataset, title=caption, fps=fps)

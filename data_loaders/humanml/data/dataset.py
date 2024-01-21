@@ -205,7 +205,7 @@ class Text2MotionDataset(data.Dataset):
 
 '''For use of training text motion matching model, and evaluations'''
 class Text2MotionDatasetV2(data.Dataset):
-    def __init__(self, opt, mean, std, split_file, w_vectorizer):
+    def __init__(self, opt, mean, std, split_file, w_vectorizer, num_frames=-1):
         self.opt = opt
         self.w_vectorizer = w_vectorizer
         self.max_length = 20
@@ -222,7 +222,10 @@ class Text2MotionDatasetV2(data.Dataset):
 
         new_name_list = []
         length_list = []
-        for name in tqdm(id_list):
+
+        num_frames = num_frames if num_frames > 0 else len(id_list)
+
+        for name in tqdm(id_list[:num_frames]):
             try:
                 motion = np.load(pjoin(opt.motion_dir, name + '.npy'))
                 if (len(motion)) < min_motion_len or (len(motion) >= 200):
@@ -721,7 +724,7 @@ class TextOnlyDataset(data.Dataset):
 
 class HumanML3D(data.Dataset):
     """A wrapper class for t2m original dataset for MDM purposes"""
-    def __init__(self, mode, datapath='./dataset/humanml_opt.txt', split="train", **kwargs):
+    def __init__(self, mode, datapath='./dataset/humanml_opt.txt', split="train", num_frames=-1, **kwargs):
         self.mode = mode
         
         self.dataset_name = 't2m'
@@ -763,7 +766,7 @@ class HumanML3D(data.Dataset):
             self.t2m_dataset = TextOnlyDataset(self.opt, self.mean, self.std, self.split_file)
         else:
             self.w_vectorizer = WordVectorizer(pjoin(abs_base_path, 'glove'), 'our_vab')
-            self.t2m_dataset = Text2MotionDatasetV2(self.opt, self.mean, self.std, self.split_file, self.w_vectorizer)
+            self.t2m_dataset = Text2MotionDatasetV2(self.opt, self.mean, self.std, self.split_file, self.w_vectorizer, num_frames=num_frames)
             self.num_actions = 1 # dummy placeholder
 
         assert len(self.t2m_dataset) > 1, 'You loaded an empty dataset, ' \
