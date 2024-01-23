@@ -41,7 +41,7 @@ def get_config(config_file: str, merge: bool = True) -> CN:
 
 class EvaluationDataset(Dataset):
 
-    def __init__(self, model, dataset, device, mm_num_samples, mm_num_repeats):
+    def __init__(self, model, dataset, device, mm_num_samples, mm_num_repeats, scale=1.0):
         self.normalizer = InterGenNormalizer()
         self.model = model.to(device)
         self.model.eval()
@@ -65,7 +65,7 @@ class EvaluationDataset(Dataset):
                     batch["text"] = list(text)
                 batch["motion_lens"] = motion_lens
 
-                batch = self.model.forward_test(batch)
+                batch = self.model.forward_test(batch, scale=scale)
                 motions_output = batch["output"][:, :, :524, ...].reshape(batch["output"].shape[0], batch["output"].shape[1], 2, -1)
                 motions_output = self.normalizer.backward(motions_output.cpu().detach().numpy())
 
@@ -124,10 +124,10 @@ class MMGeneratedDataset(Dataset):
         return "mm_generated", text, mm_motions1, mm_motions2, motion_lens
 
 
-def get_intergen_loader(batch_size, model, ground_truth_dataset, device, mm_num_samples, mm_num_repeats):
+def get_intergen_loader(batch_size, model, ground_truth_dataset, device, mm_num_samples, mm_num_repeats, guidance_param=1.0):
     # Currently the configurations of two datasets are almost the same
     print(f'Generating motion using {model.__class__}')
-    dataset = EvaluationDataset(model, ground_truth_dataset, device, mm_num_samples=mm_num_samples, mm_num_repeats=mm_num_repeats)
+    dataset = EvaluationDataset(model, ground_truth_dataset, device, mm_num_samples=mm_num_samples, mm_num_repeats=mm_num_repeats, scale=guidance_param)
     mm_dataset = MMGeneratedDataset(dataset)
 
     motion_loader = DataLoader(dataset, batch_size=batch_size, drop_last=True, num_workers=0, shuffle=True)

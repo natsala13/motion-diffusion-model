@@ -1,26 +1,26 @@
 import yaml
 from attrdict import AttrDict
+from functools import partial
 
-from utils.parser_util import evaluation_parser
-from utils.fixseed import fixseed
-from datetime import datetime
-from data_loaders.humanml.motion_loaders.model_motion_loaders import get_mdm_loader  # get_motion_loader
-from data_loaders.humanml.utils.metrics import *
-from data_loaders.humanml.networks.evaluator_wrapper import EvaluatorMDMWrapper, EvaluatorIntergenWrapper
-from data_loaders.humanml.scripts.motion_process import *
-from data_loaders.humanml.utils.utils import *
-from utils.model_util import create_model_and_diffusion, load_model_wo_clip
-
-# from data_loaders.humanml.utils.metrics import calculate_activation_statistics, calculate_frechet_distance
-from collections import OrderedDict
-# import torch
-# from tqdm import tqdm
-# import numpy as np
 
 from diffusion import logger
+from datetime import datetime
+from collections import OrderedDict
+from torch.utils.data import DataLoader
+
 from utils import dist_util
+from utils.fixseed import fixseed
+from utils.parser_util import evaluation_parser
+from utils.model_util import create_model_and_diffusion, load_model_wo_clip
+from data_loaders.humanml.utils.utils import *
+from data_loaders.humanml.utils.metrics import *
 from data_loaders.get_data import get_dataset_loader
+from data_loaders.humanml.scripts.motion_process import *
+from data_loaders.interhuman.interhuman import InterHumanDataset
+from data_loaders.humanml.motion_loaders.model_motion_loaders import get_mdm_loader  # get_motion_loader
+from data_loaders.humanml.networks.evaluator_wrapper import EvaluatorMDMWrapper, EvaluatorIntergenWrapper
 from model.cfg_sampler import ClassifierFreeSampleModel
+from utils.intergen_eval_utils import get_config, get_intergen_loader
 
 torch.multiprocessing.set_sharing_strategy('file_system')
 
@@ -262,7 +262,7 @@ if __name__ == '__main__':
         mm_num_repeats = 0
         mm_num_times = 0
         diversity_times = 300
-        replication_times = 5  # about 3 Hrs
+        replication_times = 1  # about 3 Hrs
     elif args.eval_mode == 'wo_mm':
         num_samples_limit = 1000
         run_mm = False
@@ -289,35 +289,35 @@ if __name__ == '__main__':
     logger.log("creating data loader...")
     split = 'test'
     # TODO: The difference is the mean loaded, - Why is it different?
-    # gt_loader = get_dataset_loader(name=args.dataset, batch_size=args.batch_size, num_frames=None, split=split, hml_mode='gt')
-    gen_loader = get_dataset_loader(name=args.dataset, batch_size=args.batch_size, num_frames=None, split=split, hml_mode='eval')
-    # num_actions = gen_loader.dataset.num_actions
-
+    
     logger.log("Creating model and diffusion...")
-    model, diffusion = create_model_and_diffusion(args, gen_loader)
+    model, diffusion = create_model_and_diffusion(args, data=None)
 
     logger.log(f"Loading checkpoints from [{args.model_path}]...")
     state_dict = torch.load(args.model_path, map_location='cpu')
     load_model_wo_clip(model, state_dict)
 
     if args.guidance_param != 1:
-        model = ClassifierFreeSampleModel(model)   # wrapping model with the classifier-free sampler
+        model = ClassifierFreeSampleModel(model)
     model.to(dist_util.dev())
     model.eval()  # disable random masking
 
-    eval_motion_loaders = {
-        ################
-        ## HumanML3D Dataset##
-        ################
-        'vald': lambda: get_mdm_loader(
-            model, diffusion, args.batch_size,
-            gen_loader, mm_num_samples, mm_num_repeats, gen_loader.dataset.opt.max_motion_length, num_samples_limit, args.guidance_param
-        )
-    }
+    gt_dataset = InterHumanDataset(split='test', normalize=False, num_frames=args.num_frames)
+    eval_gt_data = DataLoader(gt_dataset, batch_size=args.batch_size,
+                                           shuffle=True, num_workers=0, drop_last=True)
 
-    eval_wrapper = EvaluatorMDMWrapper(args.dataset, dist_util.dev())
-    with open("../InterGen/configs/eval_model.yaml", 'r') as f:
-        eval_model_cfg = AttrDict(yaml.safe_load(f))
-    eval_wrapper = EvaluatorIntergenWrapper(eval_model_cfg, dist_util.dev())
+    eval_data = {'test': partial(get_intergen_loader,
+                                args.batch_size,  # has to be 96!
+                                model,
+                                gt_dataset,
+                                args.device,
+                                mm_num_samples=0,
+                                mm_num_repeats=0,
+                                guidance_param=args.guidance_param
+                                )
+                                }
 
-    evaluation(eval_wrapper, gen_loader, eval_motion_loaders, log_file, replication_times, diversity_times, mm_num_times, run_mm=run_mm)
+    eval_config = get_config('../InterGen/configs/eval_model.yaml')
+    eval_wrapper = EvaluatorIntergenWrapper(eval_config, args.device)
+
+    evaluation(eval_wrapper, eval_gt_data, eval_data, log_file, replication_times, diversity_times, mm_num_times, run_mm=run_mm)
