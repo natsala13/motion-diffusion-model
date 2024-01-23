@@ -5,8 +5,8 @@ import copy
 import time
 import signal
 import functools
-from os.path import join as pjoin
 from functools import partial
+from os.path import join as pjoin
 from types import SimpleNamespace
 
 import numpy as np
@@ -263,14 +263,6 @@ class TrainLoop:
 
     def forward_backward(self, batch, cond):
         self.mp_trainer.zero_grad()
-        # for i in range(0, batch.shape[0], self.microbatch):  # TODO: Deprecated - doesn't do anything.
-        # # Eliminates the microbatch feature
-        # assert i == 0
-        # assert self.microbatch == self.batch_size
-        # micro = batch
-        # micro_cond = cond
-        # last_batch = self.batch_size >= batch.shape[0]
-
         t, weights = self.schedule_sampler.sample(batch.shape[0], dist_util.dev())
 
         compute_losses = functools.partial(
@@ -282,13 +274,8 @@ class TrainLoop:
             dataset=self.data.dataset
         )
         
-        # import ipdb;ipdb.set_trace()
         losses = compute_losses()
-        # if last_batch or not self.use_ddp:  # self.use_ddp is set to False Hard codded.
-        #     losses = compute_losses()
-        # else:
-        #     with self.model.no_sync():
-        #         losses = compute_losses()
+
 
         if isinstance(self.schedule_sampler, LossAwareSampler):
             self.schedule_sampler.update_with_local_losses(
