@@ -18,7 +18,7 @@ def create_model_and_diffusion(args, data):
     diffusion = create_gaussian_diffusion(args)
     if args.arch == 'mdm_any':
         model = MdmAny(input_features=262)
-    if args.arch == 'mdm_attend':
+    elif args.arch == 'mdm_attend':
         model = MdmAttend(input_features=263)
     else:
         model = MDM(**get_model_args(args, data), diffusion=diffusion)
