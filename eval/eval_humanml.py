@@ -272,11 +272,11 @@ if __name__ == '__main__':
     split = 'test'
     # TODO: The difference is the mean loaded, - Why is it different?
     # gt_loader = get_dataset_loader(name=args.dataset, batch_size=args.batch_size, num_frames=None, split=split, hml_mode='gt')
-    gen_loader = get_dataset_loader(name=args.dataset, batch_size=args.batch_size, num_frames=None, split=split, hml_mode='eval')
+    gen_loader = get_dataset_loader(name=args.dataset, batch_size=args.batch_size, num_frames=-1, split=split, hml_mode='eval')
     # num_actions = gen_loader.dataset.num_actions
 
     logger.log("Creating model and diffusion...")
-    model, diffusion = create_model_and_diffusion(args, gen_loader)
+    model, diffusion = create_model_and_diffusion(args, None)
 
     logger.log(f"Loading checkpoints from [{args.model_path}]...")
     state_dict = torch.load(args.model_path, map_location='cpu')
@@ -297,9 +297,9 @@ if __name__ == '__main__':
         )
     }
 
-    # eval_wrapper = EvaluatorMDMWrapper(args.dataset, dist_util.dev())
-    with open("../InterGen/configs/eval_model.yaml", 'r') as f:
-        eval_model_cfg = AttrDict(yaml.safe_load(f))
-    eval_wrapper = EvaluatorIntergenWrapper(eval_model_cfg, dist_util.dev())
+    eval_wrapper = EvaluatorMDMWrapper(args.dataset, dist_util.dev())
+    # with open("../InterGen/configs/eval_model.yaml", 'r') as f:
+    #     eval_model_cfg = AttrDict(yaml.safe_load(f))
+    # eval_wrapper = EvaluatorIntergenWrapper(eval_model_cfg, dist_util.dev())
 
     evaluation(eval_wrapper, gen_loader, eval_motion_loaders, log_file, replication_times, diversity_times, mm_num_times, run_mm=run_mm)
