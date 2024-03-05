@@ -23,6 +23,7 @@ from diffusion.resample import create_named_schedule_sampler
 from data_loaders.humanml.networks.evaluator_wrapper import EvaluatorMDMWrapper
 from eval import eval_humanml, eval_humanact12_uestc, eval_intergen
 from data_loaders.get_data import get_dataset_loader
+from utils.model_util import CosineWarmupScheduler
 
 
 # Intergen evaluation imports.
@@ -35,6 +36,7 @@ from data_loaders.humanml.networks.evaluator_wrapper import EvaluatorIntergenWra
 # We found that the lg_loss_scale quickly climbed to
 # 20-21 within the first ~1K steps of training.
 INITIAL_LOG_LOSS_SCALE = 20.0
+DEFAULT_GAMMA = 0.99998
 
 
 class TrainLoop:
@@ -82,6 +84,14 @@ class TrainLoop:
             self._load_optimizer_state()
             # Model was resumed, either due to a restart or a checkpoint
             # being specified at the command line.
+
+        match args.lr_method:
+            case 'exp':
+                self.lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(self.opt, gamma=DEFAULT_GAMMA)
+            case 'cos':
+                self.lr_scheduler = CosineWarmupScheduler(optimizer=self.opt, warmup=None, max_iters=args.num_steps)
+            case _:
+                self.lr_scheduler = None
 
         self.device = torch.device("cpu")
         if torch.cuda.is_available() and dist_util.dev() != 'cpu':
@@ -218,12 +228,18 @@ class TrainLoop:
             log_file = os.path.join(self.save_dir, f'eval_interhumam_{(self.resume_step):09d}.log')
             diversity_times = 300
             mm_num_times = 0  # mm is super slow hence we won't run it during training
-            eval_dict = eval_intergen.evaluation(
-                self.eval_wrapper, self.eval_gt_data, self.eval_data, log_file,
-                replication_times=1, diversity_times=diversity_times, mm_num_times=mm_num_times, run_mm=False)
-            # print(eval_dict)
+            if self.dataset == 'humanml':
+                eval_dict = eval_humanml.evaluation(
+                    self.eval_wrapper, self.eval_gt_data, self.eval_data, log_file,
+                    replication_times=1, diversity_times=diversity_times, mm_num_times=mm_num_times, run_mm=False)
+            elif 'interhuman' in self.dataset:
+                eval_dict = eval_intergen.evaluation(
+                    self.eval_wrapper, self.eval_gt_data, self.eval_data, log_file,
+                    replication_times=1, diversity_times=diversity_times, mm_num_times=mm_num_times, run_mm=False)
+            else:
+                return
 
-            metrices_to_report = ['FID_test', 'Diversity_test', 'MM Distance_test']
+            metrices_to_report = ['FID_test', 'Diversity_test']  # 'MM Distance_test'
             for k, v in {key: eval_dict[key] for key in metrices_to_report}.items():
                 self.train_platform.report_scalar(name=k, value=v,
                                                    iteration=self.resume_step,
@@ -258,7 +274,9 @@ class TrainLoop:
     def run_step(self, batch, cond):
         self.forward_backward(batch, cond)
         self.mp_trainer.optimize(self.opt)
-        self._anneal_lr()
+        # self._anneal_lr()
+        if self.lr_scheduler:
+            self.lr_scheduler.step()
         self.log_step()
 
     def forward_backward(self, batch, cond):
