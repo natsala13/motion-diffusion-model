@@ -53,6 +53,7 @@ class WandBPlatform(TrainPlatform):
     def __init__(self, save_dir, experiment_name='mdm couple experiment', **config):
         print(f'Starting  experiment {experiment_name}')
         super().__init__(save_dir)
+        wandb.login(key='deca9d4d3521670701b2b00b34124d8786ddc7fc')
         wandb.init(
                 project='mdm',
                 id=experiment_name,

@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 import torch.nn.functional as F
+import einops
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -197,7 +198,7 @@ class MDM(nn.Module):
             x = torch.cat((x_reshaped, emb_gru), axis=1)  #[bs, d+joints*feat, 1, #frames]
 
         x = self.input_process(x)
-        mask = torch.logical_not(y['mask'].squeeze(1).squeeze(1)) # b x seqlen
+        mask = torch.logical_not(y['mask'].squeeze(1).squeeze(1)).to(x.device) # b x seqlen
 
         if self.arch == 'trans_enc':
             # adding the timestep embed
@@ -244,7 +245,7 @@ class MDM(nn.Module):
         super().train(*args, **kwargs)
         self.rot2xyz.smpl_model.train(*args, **kwargs)
 
-    def forward_test(self, batch):
+    def forward_test(self, batch, **kwargs) -> Tensor:
         assert self.diffusion != None
 
         batch_size = len(batch['text'])
@@ -269,8 +270,8 @@ class MDM(nn.Module):
             noise=None,
             const_noise=False,
         )
-
-        return {'output': sample.permute(0, 3, 1, 2)}
+        
+        return einops.rearrange(sample[:, :, :524], 'b (two f) one t -> b t two (f one)', two=2)
     
     @staticmethod
     def save_attention_matrices(attention, timestemp: int):
@@ -332,7 +333,6 @@ class InputProcess(nn.Module):
             self.velEmbedding = nn.Linear(self.input_feats, self.latent_dim)
 
     def forward(self, x):
-        # import ipdb;ipdb.set_trace()
         bs, njoints, nfeats, nframes = x.shape
         x = x.permute((3, 0, 1, 2)).reshape(nframes, bs, njoints*nfeats)
 

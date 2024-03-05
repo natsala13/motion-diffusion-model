@@ -1,7 +1,7 @@
 from torch.utils.data import DataLoader
 
 from data_loaders.tensors import collate as all_collate, t2m_collate
-from data_loaders.interhuman.interhuman import InterHumanDataset, interhuman_collate, interhuman_couple_collate, interaction_matrix_collate
+from data_loaders.interhuman.interhuman import InterHumanDataset, interhuman_collate, interhuman_couple_collate, interaction_matrix_collate, interhuman_time_collate
 
 
 def get_dataset_class(name):
@@ -37,6 +37,8 @@ def get_collate_fn(name, hml_mode='train'):
         return interhuman_collate
     elif name == 'interhuman_matrix':
         return interaction_matrix_collate
+    elif name == 'interhuman_time':
+        return interhuman_time_collate
     else:
         return all_collate
 

@@ -143,7 +143,7 @@ def main():
             sample = normalizer.backward(sample.cpu().permute(0, 1, 3, 2))
             sample = sample.permute(0, 1, 3, 2)[..., :n_joints * xyz_features, :]
 
-        rot2xyz_pose_rep = 'xyz' if model.data_rep in ['xyz', 'hml_vec', 'interhuman', 'interhuman_solo']  else model.data_rep
+        rot2xyz_pose_rep = 'xyz' if model.data_rep in ['xyz', 'hml_vec', 'interhuman', 'interhuman_solo', 'interhuman any']  else model.data_rep
         rot2xyz_mask = None if rot2xyz_pose_rep == 'xyz' else model_kwargs['y']['mask'].reshape(args.batch_size, n_frames).bool()
         sample = model.rot2xyz(x=sample, mask=rot2xyz_mask, pose_rep=rot2xyz_pose_rep, glob=True, translation=True,
                                jointstype='smpl', vertstrans=True, betas=None, beta=0, glob_rot=None,

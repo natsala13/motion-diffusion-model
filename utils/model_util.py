@@ -1,7 +1,11 @@
 import re
 
+import torch
+import numpy as np
+
 from model.mdm import MDM
-from model.mdm_any import MdmAny, MdmAttend
+from model.mdm_any import MdmAny, MdmAttend, MdmTime
+from model.tedi import Unet
 from diffusion import gaussian_diffusion as gd
 from diffusion.respace import SpacedDiffusion, space_timesteps
 from utils.parser_util import get_cond_mode
@@ -17,9 +21,13 @@ def load_model_wo_clip(model, state_dict):
 def create_model_and_diffusion(args, data):
     diffusion = create_gaussian_diffusion(args)
     if args.arch == 'mdm_any':
-        model = MdmAny(input_features=262)
+        model = MdmAny(input_features=262, diffusion=diffusion)
     elif args.arch == 'mdm_attend':
-        model = MdmAttend(input_features=263)
+        model = MdmAttend(input_features=263, diffusion=diffusion)
+    elif args.arch == 'mdm_time':
+        model = MdmTime(input_features=262, diffusion=diffusion)
+    elif args.arch == 'tedi':
+        model = Unet(input_features=262, diffusion=diffusion)
     else:
         model = MDM(**get_model_args(args, data), diffusion=diffusion)
 
@@ -54,13 +62,12 @@ def get_model_args(args, data):
         data_rep = 'interhuman_solo'
         njoints = 262
         nfeats = 1
-    elif args.dataset == 'interhuman':
-        data_rep = 'interhuman'
-        njoints = 262 * 2
-        nfeats = 1
     elif args.dataset == 'interhuman_matrix':
         data_rep = 'interhuman'
         njoints = 262 * 2 + 25 # 108
+        nfeats = 1
+    elif 'interhuman' in args.dataset:
+        data_rep = 'interhuman'
         nfeats = 1
 
     return {'modeltype': '', 'njoints': njoints, 'nfeats': nfeats, 'num_actions': num_actions,
@@ -107,3 +114,21 @@ def create_gaussian_diffusion(args):
         lambda_rcxyz=args.lambda_rcxyz,
         lambda_fc=args.lambda_fc,
     )
+
+
+class CosineWarmupScheduler(torch.optim.lr_scheduler._LRScheduler):
+    def __init__(self, optimizer, warmup, max_iters, verbose=False):
+        self.warmup = warmup
+        self.max_num_iters = max_iters
+        super().__init__(optimizer, verbose=verbose)
+
+    def get_lr(self):
+        lr_factor = self.get_lr_factor(epoch=self.last_epoch)
+        return [base_lr * lr_factor for base_lr in self.base_lrs]
+
+    def get_lr_factor(self, epoch):
+        lr_factor = 0.5 * (1 + np.cos(np.pi * epoch / self.max_num_iters))
+        if epoch <= self.warmup:
+            lr_factor *= (epoch+1) * 1.0 / self.warmup
+        return lr_factor
+    

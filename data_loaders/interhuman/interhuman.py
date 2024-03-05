@@ -282,6 +282,16 @@ def interhuman_couple_collate(batch):
     return collate(adapted_batch)
 
 
+def interhuman_time_collate(batch):
+    adapted_batch = [{
+        'inp': torch.tensor(np.concatenate((b[2], b[3]), axis=0).T).float().unsqueeze(1), # [seqlen, J] -> [J, 1, seqlen]
+        'text': b[1],
+        'lengths': b[4],
+        'tokens': b[1]
+    } for b in batch]
+    return collate(adapted_batch)
+
+
 def interaction_matrix_collate(batch):
     adapted_batch = [{
         'inp': torch.tensor(np.concatenate((b[2], b[3], b[5]), axis=1).T).float().unsqueeze(1), # [seqlen, J] -> [J, 1, seqlen]

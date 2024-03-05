@@ -77,7 +77,7 @@ def add_diffusion_options(parser):
 def add_model_options(parser):
     group = parser.add_argument_group('model')
     group.add_argument("--arch", default='trans_enc',
-                       choices=['trans_enc', 'trans_dec', 'gru', 'mdm_any', 'mdm_attend'], type=str,
+                       choices=['trans_enc', 'trans_dec', 'gru', 'mdm_any', 'mdm_attend', 'mdm_time'], type=str,
                        help="Architecture types as reported in the paper.")
     group.add_argument("--emb_trans_dec", default=False, type=bool,
                        help="For trans_dec architecture only, if true, will inject condition as a class token"
@@ -101,7 +101,7 @@ def add_model_options(parser):
 
 def add_data_options(parser):
     group = parser.add_argument_group('dataset')
-    group.add_argument("--dataset", default='humanml', choices=['humanml', 'kit', 'humanact12', 'uestc', 'interhuman', 'interhuman_solo', 'interhuman_matrix'], type=str,
+    group.add_argument("--dataset", default='humanml', choices=['humanml', 'kit', 'humanact12', 'uestc', 'interhuman', 'interhuman_solo', 'interhuman_matrix', 'interhuman_time'], type=str,
                        help="Dataset name (choose from list).")
     group.add_argument("--data_dir", default="", type=str,
                        help="If empty, will use defaults according to the specified dataset.")
@@ -118,6 +118,7 @@ def add_training_options(parser):
     group.add_argument("--lr", default=1e-4, type=float, help="Learning rate.")
     group.add_argument("--weight_decay", default=0.0, type=float, help="Optimizer weight decay.")
     group.add_argument("--lr_anneal_steps", default=0, type=int, help="Number of learning rate anneal steps.")
+    group.add_argument("--lr_method", default='none', type=str, help="Learning rate method for schedualer.")
     group.add_argument("--eval_batch_size", default=32, type=int,
                        help="Batch size during evaluation loop. Do not change this unless you know what you are doing. "
                             "T2m precision calculation is based on fixed batch size 32.")
@@ -206,7 +207,7 @@ def add_evaluation_options(parser):
 def get_cond_mode(args):
     if args.unconstrained:
         cond_mode = 'no_cond'
-    elif args.dataset in ['kit', 'humanml', 'interhuman', 'interhuman_solo', 'interhuman_matrix']:
+    elif args.dataset in ['kit', 'humanml', 'interhuman', 'interhuman_solo', 'interhuman_matrix', 'interhuman_time']:
         cond_mode = 'text'
     else:
         cond_mode = 'action'

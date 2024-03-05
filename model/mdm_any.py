@@ -18,26 +18,23 @@ from data_loaders.tensors import collate
 CLIP_VERSION = 'ViT-B/32'
 
 class MdmBase(nn.Module):
-    def __init__(self, latent_dim=1024, clip_dim=512, cond_mask_prob=0.1, data_rep='rot6d',
+    def __init__(self, latent_dim=1024, diffusion=None, clip_dim=512, cond_mask_prob=0.1, data_rep='rot6d',
                   dropout=0.1, input_features=263, window_size=-1):
         super().__init__()
 
         self.dataset = 'interhuman'
+        self.diffusion = diffusion
+        self.cond_mask_prob = cond_mask_prob
 
         self.sequence_pos_encoder = PositionalEncoding(latent_dim, dropout)
-
-        
-        self.cond_mask_prob = cond_mask_prob
         self.embed_timestep = TimestepEmbedder(latent_dim, self.sequence_pos_encoder)
+
+        self.input_features = input_features
         self.input_process = InputProcess(data_rep, input_features, latent_dim)
-
-        self._temporal_mask = self._create_temporal_mask(window_size=window_size, max_sequence=301)  # TODO: Change to param
-        self.embed_text = nn.Linear(clip_dim, latent_dim)
-        print('EMBED TEXT')
-        print('Loading CLIP...')
-        self.clip_model = self.load_and_freeze_clip(CLIP_VERSION)
-
         self.output_process = OutputProcess(data_rep, input_features, latent_dim, input_features, 1)
+
+        self.embed_text = nn.Linear(clip_dim, latent_dim)
+        self.clip_model = self.load_and_freeze_clip(CLIP_VERSION)
 
         self.rot2xyz = Rotation2xyz(device='cpu', dataset='interhuman')
 
@@ -46,8 +43,8 @@ class MdmBase(nn.Module):
 
     @staticmethod
     def load_and_freeze_clip(clip_version):
-        clip_model, clip_preprocess = clip.load(clip_version, device='cpu',
-                                                jit=False)  # Must set jit=False for training
+        print('Loading CLIP...')
+        clip_model, _ = clip.load(clip_version, device='cpu', jit=False)  # Must set jit=False for training
 
         # Freeze CLIP weights
         clip_model.eval()
@@ -55,26 +52,6 @@ class MdmBase(nn.Module):
             p.requires_grad = False
 
         return clip_model
-
-    @staticmethod
-    def _create_temporal_mask(window_size: int, max_sequence: int, attend_to_condition: bool=True) -> Optional[Tensor]:
-        '''create a mask of size (seq_len, seq_len) where only the window_size diagonal is one'''
-        if window_size < 0:
-            return None
-        
-        window = window_size ** 2
-        temporal_masks = torch.stack([torch.Tensor([(i - j) ** 2 < window 
-                    for i in range(max_sequence)]) for j in range(max_sequence)])
-        
-        if attend_to_condition:
-            # The name is misleading since we are also attenting to the first frame.
-            temporal_masks[:, :2] = 1
-        
-        return temporal_masks.to('cuda')
-    
-    def temporal_mask(self, x: torch.Tensor) -> Optional[Tensor]:
-        if self._temporal_mask is not None:
-            return self._temporal_mask[:x.shape[0], :x.shape[0]]
 
     def mask_cond(self, cond, force_mask=False):
         bs, d = cond.shape
@@ -88,7 +65,6 @@ class MdmBase(nn.Module):
             return cond
 
     def encode_text(self, raw_text):
-        # raw_text - list (batch_size length) of strings with input text prompts
         device = next(self.parameters()).device
         max_text_len = 20 if self.dataset in ['humanml', 'kit'] else None  # Specific hardcoding for humanml dataset
         if max_text_len is not None:
@@ -96,10 +72,8 @@ class MdmBase(nn.Module):
             context_length = max_text_len + 2 # start_token + 20 + end_token
             assert context_length < default_context_length
             texts = clip.tokenize(raw_text, context_length=context_length, truncate=True).to(device) # [bs, context_length] # if n_tokens > context_length -> will truncate
-            # print('texts', texts.shape)
             zero_pad = torch.zeros([texts.shape[0], default_context_length-context_length], dtype=texts.dtype, device=texts.device)
             texts = torch.cat([texts, zero_pad], dim=1)
-            # print('texts after pad', texts.shape, texts)
         else:
             texts = clip.tokenize(raw_text, truncate=True).to(device) # [bs, context_length] # if n_tokens > 77 -> will truncate
         return self.clip_model.encode_text(texts).float()
@@ -151,6 +125,37 @@ class MdmBase(nn.Module):
             # np.save(f'attention/attention_t{timestemp}_l{i}.npy', att[0].detach().cpu().numpy())
             plt.imshow(att[0].detach().cpu().numpy())
             plt.savefig(f'attention/attention_t{timestemp}_l{i}.png')
+
+
+    def _create_args_for_generation(self, batch: dict) -> tuple[int, int, dict]:
+        batch_size = len(batch['text'])
+        n_frames = batch['motion_lens'][0]
+
+        collate_args = [{'inp': torch.zeros(n_frames), 'text': batch['text'][0], 'tokens': None, 'lengths': n_frames}] * batch_size
+        _, model_kwargs = collate(collate_args)
+        device = next(self.parameters()).device
+        model_kwargs['y'] = {key: val.to(device) if torch.is_tensor(val) else val for key, val in model_kwargs['y'].items()}
+
+        return batch_size, n_frames, model_kwargs
+
+
+    def forward_test(self, batch: dict, **kwargs) -> Tensor:
+        assert self.diffusion != None
+        batch_size, n_frames, model_kwargs = self._create_args_for_generation(batch)
+        
+        sample = self.diffusion.p_sample_loop(
+            self,
+            (batch_size, self.input_features, 1, n_frames),
+            clip_denoised=False,
+            model_kwargs=model_kwargs,
+            skip_timesteps=0,  # 0 is the default value - i.e. don't skip any step
+            init_image=None,
+            progress=False,
+            dump_steps=None,
+            noise=None,
+            const_noise=False,
+        )
+        return sample.permute(0, 3, 1, 2)
 
 
 class MdmAttend(MdmBase):
@@ -262,9 +267,10 @@ class MdmAttend(MdmBase):
 
             return output[:, :, None]
 
-    def __init__(self, latent_dim=1024, clip_dim=512, cond_mask_prob=0.1, ff_size=2048, dropout=0.1,
+    def __init__(self, latent_dim=1024, diffusion=None, clip_dim=512, cond_mask_prob=0.1, ff_size=2048, dropout=0.1,
                 input_features=263, num_heads=8, num_layers=8, activation="gelu", window_size=-1):
-        super().__init__(latent_dim, clip_dim, cond_mask_prob, input_features=input_features, window_size=window_size)
+        super().__init__(latent_dim, diffusion=diffusion, clip_dim=clip_dim,
+                          cond_mask_prob=cond_mask_prob, input_features=input_features, window_size=window_size)
 
         self.input_process = self.InputAttendProcess()
         self.output_process = self.OutputProcess()
@@ -284,9 +290,9 @@ class MdmAttend(MdmBase):
         """
         xseq = self._create_sequence_from_motion(x, timesteps, y)
         mask = self._create_mask(x.shape[0], x.device, y)
-        temporal_mask = self.temporal_mask(xseq)
+        # temporal_mask = self.temporal_mask(xseq)
 
-        output = self.model(xseq, mask=temporal_mask, src_key_padding_mask=mask)[1:]
+        output = self.model(xseq, src_key_padding_mask=mask)[1:]
 
         output = self.output_process(output)
 
@@ -294,24 +300,31 @@ class MdmAttend(MdmBase):
 
 
 class MdmAny(MdmBase):
-    '''MDM model that runs actor MDM for single motion, then inject every embedding layer into the self atttention of a second MDM to generate reactor motion.'''
+    '''MDM model that runs actor MDM for single motion,
+     then inject every embedding layer into the self atttention of a second MDM to generate reactor motion.'''
     REFERENCE_CHECKPOINT = 'save/solo5/model000200000.pt'
     FEATURES = 262
 
-    def __init__(self, latent_dim=1024, clip_dim=512, cond_mask_prob=0.1, ff_size=2048, dropout=0.1,
+    def __init__(self, latent_dim=1024, diffusion=None, clip_dim=512, cond_mask_prob=0.1, ff_size=2048, dropout=0.1,
                   input_features=263, num_heads=8, num_layers=8, activation="gelu", window_size=-1):
         
-        super().__init__(latent_dim, clip_dim, cond_mask_prob, input_features=input_features, window_size=window_size)
+        super().__init__(latent_dim, diffusion=diffusion, clip_dim=clip_dim,
+                          cond_mask_prob=cond_mask_prob, input_features=input_features, window_size=window_size)
 
-        self.actor_model, checkpoint_keys = self._load_reference_model()
+        self.data_rep = 'interhuman any'
+        self.njoints = 524
+        self.nfeats = 1
+        self.input_features = input_features * 2
+        self.actor_model, checkpoint_keys, input_keys, output_keys = self._load_reference_model()
         attention_layer = AttentionInjectLayer(d_model=latent_dim,
-                                                     nhead=num_heads,
-                                                     dim_feedforward=ff_size,
+                                                     nhead=num_heads,'4'
                                                      dropout=dropout,
                                                      activation=activation)
 
         self.model = AttentionInjectEmbeddingsTransformerEncoder(attention_layer, num_layers=num_layers)
         self.model.load_state_dict(checkpoint_keys)
+        self.input_process.load_state_dict(input_keys)
+        self.output_process.load_state_dict(output_keys)
 
     def _mdm_to_store_encoder(self, mdm: MDM):
         encoder = mdm.seqTransEncoder
@@ -327,10 +340,12 @@ class MdmAny(MdmBase):
 
         checkpoint = torch.load(self.REFERENCE_CHECKPOINT)
         model_keys = {key.replace('seqTransEncoder.', ''): value for key, value in checkpoint.items() if key.startswith('seqTransEncoder')}
+        input_keys = {key.replace('input_process.', ''): value for key, value in checkpoint.items() if key.startswith('input_process')}
+        output_keys = {key.replace('output_process.', ''): value for key, value in checkpoint.items() if key.startswith('output_process')}
 
         model.load_state_dict(model_keys)
 
-        return model, model_keys
+        return model, model_keys, input_keys, output_keys
         
 
     def forward(self, x: Tensor, timesteps, y: dict):
@@ -343,12 +358,93 @@ class MdmAny(MdmBase):
 
         mask = self._create_mask(x.shape[0], x.device, y)
         mask2 = einops.repeat(mask, 'b f -> b (two f)', two=2)
-        temporal_mask = self.temporal_mask(xseq1)
+        # temporal_mask = self.temporal_mask(xseq1)
 
         with torch.no_grad():
-            output1, embeddings = self.actor_model(xseq1, mask=temporal_mask, src_key_padding_mask=mask)
+            output1, embeddings = self.actor_model(xseq1, src_key_padding_mask=mask)
 
-        output2 = self.model(xseq2, embeddings=embeddings, mask=temporal_mask, src_key_padding_mask=mask2)[1:]  # [seqlen, bs, d]
+        output2 = self.model(xseq2, embeddings=embeddings, src_key_padding_mask=mask2)[1:]  # [seqlen, bs, d]
 
         output = list(map(self.output_process, [output1[1:], output2]))
         return torch.cat(output, dim=1)
+
+class MdmTime(MdmBase):
+    '''Run MDM while concatenating two motions on time axis.'''
+    class CouplePositionalEncoding(nn.Module):
+        '''Positional encoding for concatenating motiion of 2 person on time (token) axis.'''
+        def __init__(self, d_model, dropout=0.1, max_len=1000):
+            super().__init__()
+            self.dropout = nn.Dropout(p=dropout)
+            self.max_len = max_len
+
+            pe = torch.zeros(2 * max_len, d_model)
+            position = torch.arange(0, 2 * max_len, dtype=torch.float).unsqueeze(1)
+            div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-np.log(10000.0) / d_model))
+            pe[:, 0::2] = torch.sin(position * div_term)
+            pe[:, 1::2] = torch.cos(position * div_term)
+            pe = pe.unsqueeze(0).transpose(0, 1)
+
+            self.register_buffer('pe', pe)  # So that the tensor wouldn't be backpropagated.
+
+        def forward(self, x):
+            # not used in the final model
+            one_motion_shape = x.shape // 2
+            encoding = torch.cat(self.pe[:one_motion_shape], self.pe[self.max_len:one_motion_shape + self.max_len])
+            x = x + encoding
+
+            return self.dropout(x)
+        
+    def __init__(self, latent_dim=1024, diffusion=None, clip_dim=512, cond_mask_prob=0.1, ff_size=2048, dropout=0.1,
+                input_features=262, num_heads=8, num_layers=8, activation="gelu", window_size=-1):
+        super().__init__(latent_dim, diffusion=diffusion, clip_dim=clip_dim,
+                          cond_mask_prob=cond_mask_prob, input_features=input_features, window_size=window_size)
+
+        self.positional_encoding = self.CouplePositionalEncoding(latent_dim, dropout)
+        attention_layer = nn.TransformerEncoderLayer(d_model=latent_dim,
+                                                     nhead=num_heads,
+                                                     dim_feedforward=ff_size,
+                                                     dropout=dropout,
+                                                     activation=activation)
+
+        self.model = nn.TransformerEncoder(attention_layer, num_layers=num_layers)
+    
+    def _create_mask(self, batch: int, device: torch.device, y: dict) -> Tensor:
+        
+        mask = torch.logical_not(y['mask'].squeeze(1).squeeze(1)).to(device)
+        _, tokens = mask.shape
+        mask[:, tokens // 2:] = mask[:, :tokens // 2]
+
+        step_mask = torch.zeros((batch, 1), dtype=torch.bool, device=device)
+        mask = torch.cat([step_mask, mask], dim=1) # b x seqlen + 1
+        
+        return mask
+    
+    def _create_args_for_generation(self, batch: dict) -> tuple[int, int, dict]:
+        batch_size = len(batch['text'])
+        n_frames = batch['motion_lens'][0]
+
+        collate_args = [{'inp': torch.zeros(n_frames * 2), 'text': batch['text'][0], 'tokens': None, 'lengths': n_frames}] * batch_size
+        _, model_kwargs = collate(collate_args)
+        device = next(self.parameters()).device
+        model_kwargs['y'] = {key: val.to(device) if torch.is_tensor(val) else val for key, val in model_kwargs['y'].items()}
+
+        return batch_size, n_frames * 2, model_kwargs
+    
+    def forward(self, x: Tensor, timesteps, y: dict) -> tuple[Tensor, list[Tensor]]:
+        """
+        x: [batch_size, njoints, nfeats, max_frames], denoted x_t in the paper
+        timesteps: [batch_size] (int)
+        """
+        xseq = self._create_sequence_from_motion(x, timesteps, y)
+        mask = self._create_mask(x.shape[0], x.device, y)
+
+        output = self.model(xseq, src_key_padding_mask=mask)[1:]
+        output = self.output_process(output)
+
+        return output
+    
+    def forward_test(self, batch: dict, **kwargs) -> Tensor:
+        # batch['motion_lens'][0] = 400self.max_length
+        sample = super().forward_test(batch, **kwargs)
+        
+        return einops.rearrange(sample, 'b (two t) f one -> b t two (f one)', two=2)
