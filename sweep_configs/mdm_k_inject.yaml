@@ -1,0 +1,32 @@
+program: train/train_mdm.py
+name: k_inject
+method: random
+metric:
+  goal: minimize
+  name: score
+parameters:
+  seed:
+    values: [1, 2, 3]
+  arch:
+    values: [mdm_symetric]
+  latent_dim:
+    values: [1024]
+  second_attention:
+    values: [True, False]
+  dataset:
+    value: interhuman
+  batch_size:
+    value: 64
+  ff_size:
+    value: 2048
+  eval_batch_size:
+    value: 96
+  eval_during_training:
+    value: True
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - "--train_platform_type"
+  - "WandBSweepPlatform"
+  

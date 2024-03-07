@@ -1,5 +1,8 @@
 import os
+from typing import Optional
+
 import wandb
+from wandb.wandb_run import Run
 
 class TrainPlatform:
     def __init__(self, save_dir, *args, **kwargs):
@@ -13,6 +16,15 @@ class TrainPlatform:
 
     def close(self):
         pass
+
+    @property
+    def config(self):
+        return {}
+    
+    @property
+    def name(self):
+        return 'no platform'
+    
 
 
 class ClearmlPlatform(TrainPlatform):
@@ -49,18 +61,18 @@ class TensorboardPlatform(TrainPlatform):
 class NoPlatform(TrainPlatform):
     pass
 
+
 class WandBPlatform(TrainPlatform):
     def __init__(self, save_dir, experiment_name='mdm couple experiment', **config):
         print(f'Starting  experiment {experiment_name}')
         super().__init__(save_dir)
         wandb.login(key='deca9d4d3521670701b2b00b34124d8786ddc7fc')
-        wandb.init(
-                project='mdm',
-                id=experiment_name,
-                # We pass a run name (otherwise it’ll be randomly assigned, like sunshine-lollypop-10)
-                name=experiment_name,
-                resume='allow',
-                config=config)
+        self.run= wandb.init(project='mdm',
+                            id=experiment_name,
+                            # We pass a run name (otherwise it’ll be randomly assigned, like sunshine-lollypop-10)
+                            name=experiment_name,
+                            resume='allow',
+                            config=config)
 
     def report_scalar(self, name, value, iteration, group_name=None):
         wandb.log({name: value}, step=iteration)
@@ -79,5 +91,42 @@ class WandBPlatform(TrainPlatform):
         # run.config["bar"] = 32
         # run.update()
 
-    def close(self):
-        wandb.finish()
+    def close(self, exit_code: Optional[int]=None):
+        wandb.finish(exit_code=exit_code)
+
+    def close_preempting(self):
+        wandb.mark_preempting()
+        self.close(exit_code=1)
+
+
+class WandBSweepPlatform(TrainPlatform):
+    def __init__(self, save_dir, experiment_name='mdm couple experiment', **_):
+        print(f'Starting  experiment {experiment_name}')
+        super().__init__(save_dir)
+        wandb.login(key='deca9d4d3521670701b2b00b34124d8786ddc7fc')
+        self.run = wandb.init(project='mdm',
+                                resume='allow')
+        assert self.run is not None
+        self.run.mark_preempting()
+
+    @property
+    def config(self):
+        return self.run.config
+    
+    @property
+    def name(self):
+        return self.run.name
+
+    def report_scalar(self, name, value, iteration, group_name=None):
+        wandb.log({name: value}, step=iteration)
+
+    def report_args(self, args, name):
+        pass
+
+    def close(self, exit_code: Optional[int]=None):
+        wandb.finish(exit_code=exit_code)
+
+    def close_preempting(self):
+        wandb.mark_preempting()
+        self.close(exit_code=1)
+

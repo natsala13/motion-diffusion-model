@@ -75,8 +75,6 @@ class TrainLoop:
             fp16_scale_growth=self.fp16_scale_growth,
         )
 
-        self.overwrite = args.overwrite
-
         self.opt = AdamW(
             self.mp_trainer.master_params, lr=self.lr, weight_decay=self.weight_decay
         )
@@ -152,7 +150,7 @@ class TrainLoop:
             print(f'SIGUSR1 recieved after {self.resume_step}, saving model gentely...')
             self.save()
             print('model saved')
-            self.train_platform.close()
+            self.train_platform.close_preempting()
             print('platform closed, existing...')
             sys.exit(16)
 
