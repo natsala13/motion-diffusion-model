@@ -476,7 +476,7 @@ class MdmSimetric(MdmBase):
                                                      second_attention=second_attention)
 
         self.model = DoubleInjectTransformerEncoder(attention_layer, num_layers=num_layers)
-        self.model.load_state_dict(checkpoint_keys)
+        self.model.load_state_dict(checkpoint_keys, strict=False)
         self.input_process.load_state_dict(input_keys)
         self.output_process.load_state_dict(output_keys)
 

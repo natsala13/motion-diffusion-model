@@ -212,7 +212,9 @@ class SymetricInjectLayer(TransformerEncoderLayer):
         x = src
         
         if self.second_attention:
-            sa = self._sa_block(x, x, src_mask, src_key_padding_mask, self.self_attn2)
+            num_tokens = len(x)
+            first_padding_mask = src_key_padding_mask[:, :num_tokens] if src_key_padding_mask is not None else None
+            sa = self._sa_block(x, x, src_mask, first_padding_mask, self.self_attn2)
             x = self.norm1(x + sa)
 
         x_inject = torch.cat((x, inject))

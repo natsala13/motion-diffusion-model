@@ -1,6 +1,5 @@
 program: train/train_mdm.py
 name: k_inject
-method: random
 metric:
   goal: minimize
   name: score
