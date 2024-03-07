@@ -4,7 +4,7 @@ import torch
 import numpy as np
 
 from model.mdm import MDM
-from model.mdm_any import MdmAny, MdmAttend, MdmTime
+from model.mdm_any import MdmAny, MdmAttend, MdmTime, MdmSimetric
 from model.tedi import Unet
 from diffusion import gaussian_diffusion as gd
 from diffusion.respace import SpacedDiffusion, space_timesteps
@@ -28,6 +28,8 @@ def create_model_and_diffusion(args, data):
         model = MdmTime(input_features=262, diffusion=diffusion)
     elif args.arch == 'tedi':
         model = Unet(input_features=262, diffusion=diffusion)
+    elif args.arch == 'mdm_symetric':
+        model = MdmSimetric(input_features=262, diffusion=diffusion, second_attention=args.second_attention)
     else:
         model = MDM(**get_model_args(args, data), diffusion=diffusion)
 

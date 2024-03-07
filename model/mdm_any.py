@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 
 from model.mdm import MDM, OutputProcess, InputProcess, PositionalEncoding, TimestepEmbedder
 from model.rotation2xyz import Rotation2xyz
-from model.transformer_attention import AttentionStoreEmbeddingsTransformerEncoder, AttentionInjectLayer, AttentionInjectEmbeddingsTransformerEncoder
+from model.transformer_attention import AttentionStoreEmbeddingsTransformerEncoder, AttentionInjectLayer, AttentionInjectEmbeddingsTransformerEncoder, SymetricInjectLayer, DoubleInjectTransformerEncoder
 from data_loaders.tensors import collate
 
 
@@ -317,7 +317,7 @@ class MdmAny(MdmBase):
         self.input_features = input_features * 2
         self.actor_model, checkpoint_keys, input_keys, output_keys = self._load_reference_model()
         attention_layer = AttentionInjectLayer(d_model=latent_dim,
-                                                     nhead=num_heads,'4'
+                                                     nhead=num_heads,
                                                      dropout=dropout,
                                                      activation=activation)
 
@@ -448,3 +448,62 @@ class MdmTime(MdmBase):
         sample = super().forward_test(batch, **kwargs)
         
         return einops.rearrange(sample, 'b (two t) f one -> b t two (f one)', two=2)
+
+
+
+class MdmSimetric(MdmBase):
+    '''Run te same model twice while concatenating K matrices from one inference to the second one.'''
+    REFERENCE_CHECKPOINT = 'save/solo5/model000200000.pt'
+    FEATURES = 262
+
+    def __init__(self, latent_dim=1024, diffusion=None, second_attention=False,
+                  clip_dim=512, cond_mask_prob=0.1, ff_size=2048, dropout=0.1,
+                  input_features=263, num_heads=8, num_layers=8, activation="gelu", window_size=-1):
+
+        super().__init__(latent_dim, diffusion=diffusion,
+                          clip_dim=clip_dim, cond_mask_prob=cond_mask_prob,
+                            input_features=input_features, window_size=window_size)
+
+        self.data_rep = 'interhuman any'
+        self.njoints = 524
+        self.nfeats = 1
+        self.input_features = input_features * 2
+        checkpoint_keys, input_keys, output_keys = self._load_reference_model()
+        attention_layer = SymetricInjectLayer(d_model=latent_dim,
+                                                     nhead=num_heads,
+                                                     dropout=dropout,
+                                                     activation=activation,
+                                                     second_attention=second_attention)
+
+        self.model = DoubleInjectTransformerEncoder(attention_layer, num_layers=num_layers)
+        self.model.load_state_dict(checkpoint_keys)
+        self.input_process.load_state_dict(input_keys)
+        self.output_process.load_state_dict(output_keys)
+
+    def _load_reference_model(self) -> tuple[dict, dict, dict]:
+        checkpoint = torch.load(self.REFERENCE_CHECKPOINT)
+        model_keys = {key.replace('seqTransEncoder.', ''): value
+                      for key, value in checkpoint.items() if key.startswith('seqTransEncoder')}
+        input_keys = {key.replace('input_process.', ''): value
+                      for key, value in checkpoint.items() if key.startswith('input_process')}
+        output_keys = {key.replace('output_process.', ''): value
+                       for key, value in checkpoint.items() if key.startswith('output_process')}
+
+        return model_keys, input_keys, output_keys
+
+
+    def forward(self, x: Tensor, timesteps, y: dict):
+        """
+        x: [batch_size, njoints, nfeats, max_frames], denoted x_t in the paper
+        timesteps: [batch_size] (int)
+        """
+        xseq1 = self._create_sequence_from_motion(x[:, :self.FEATURES], timesteps, y)
+        xseq2 = self._create_sequence_from_motion(x[:, self.FEATURES:], timesteps, y)
+
+        mask = self._create_mask(x.shape[0], x.device, y)
+        mask2 = einops.repeat(mask, 'b f -> b (two f)', two=2)
+
+        output1, output2 = self.model(xseq1, xseq2, src_key_padding_mask=mask2)  # [seqlen, bs, d]
+
+        output = list(map(self.output_process, [output1[1:], output2[1:]]))
+        return torch.cat(output, dim=1)

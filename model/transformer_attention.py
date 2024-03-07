@@ -1,9 +1,10 @@
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Callable
 
 import torch
 from torch import Tensor
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
-
+from torch.nn.functional import relu
+from torch.nn.modules.activation import MultiheadAttention
 
 def assert_padding_type(src_key_padding_mask: Optional[Tensor]):
     if src_key_padding_mask is not None:
@@ -161,7 +162,8 @@ class AttentionStoreEmbeddingsTransformerEncoder(TransformerEncoder):
             output = self.norm(output)
 
         return output, embedding_layers
-    
+
+
 class AttentionInjectEmbeddingsTransformerEncoder(TransformerEncoder):
     """Transformer which let you inject input from one self encoder to a second one along K, V dimension.
     Need of an Attention Inject layers."""
@@ -185,3 +187,71 @@ class AttentionInjectEmbeddingsTransformerEncoder(TransformerEncoder):
             output = self.norm(output)
 
         return output
+
+
+class SymetricInjectLayer(TransformerEncoderLayer):
+    """Attention layer, containing self attention (one or two layers)
+    And can concatenate output of another layer into either any or all K, Q, V matrices.
+    """
+    def __init__(self, d_model: int, nhead: int, dropout: float=0.1,
+                second_attention: bool=False, batch_first: bool=False,
+                device=None, dtype=None, **kwargs) -> None:
+        super().__init__(d_model, nhead, dropout=dropout, batch_first=batch_first,
+                          device=device, dtype=dtype, **kwargs)
+
+        factory_kwargs = {'device': device, 'dtype': dtype}
+        self.second_attention = second_attention
+        if second_attention:
+            self.self_attn2 = MultiheadAttention(d_model, nhead, dropout=dropout,
+                                                batch_first=batch_first, **factory_kwargs)
+
+    def forward(self, src: Tensor, inject: Tensor, src_mask: Optional[Tensor] = None,
+                src_key_padding_mask: Optional[Tensor] = None) -> Tensor:
+        assert_padding_type(src_key_padding_mask)
+
+        x = src
+        
+        if self.second_attention:
+            sa = self._sa_block(x, x, src_mask, src_key_padding_mask, self.self_attn2)
+            x = self.norm1(x + sa)
+
+        x_inject = torch.cat((x, inject))
+
+        sa = self._sa_block(x, x_inject, src_mask, src_key_padding_mask, self.self_attn)
+        x = self.norm1(x + sa)
+
+        x = self.norm2(x + self._ff_block(x))
+
+        return x
+
+    def _sa_block(self, x: Tensor, x_inject: Tensor, attn_mask: Optional[Tensor],
+                   key_padding_mask: Optional[Tensor], atention_func: Callable) -> Tensor:
+        x, _ = atention_func(x, x_inject, x_inject,  # Q, K, V
+                                attn_mask=attn_mask,
+                                key_padding_mask=key_padding_mask)
+        return self.dropout1(x)
+
+    def _ff_block(self, x: Tensor) -> Tensor:
+        x = self.linear2(self.dropout(self.activation(self.linear1(x))))
+        return self.dropout2(x)
+
+
+class DoubleInjectTransformerEncoder(TransformerEncoder):
+    """Running the same transformer twice, while injecting K, Q, V matrices from one inference to anoter."""
+
+    def forward(self, actor1: Tensor, actor2: Tensor, mask: Optional[Tensor] = None,
+                src_key_padding_mask: Optional[Tensor] = None) -> Tuple[Tensor]:
+        assert_padding_type(src_key_padding_mask)
+        assert isinstance(self.layers[0], SymetricInjectLayer)
+
+        embeding_a, embeding_b = actor1, actor2
+        for layer in self.layers:
+            embeding = layer(embeding_a, embeding_b, src_mask=mask, src_key_padding_mask=src_key_padding_mask)
+            embeding_b = layer(embeding_b, embeding_a, src_mask=mask, src_key_padding_mask=src_key_padding_mask)
+
+            embeding_a = embeding
+
+        # if self.norm is not None:
+        #     output = self.norm(output)
+
+        return embeding_a, embeding_b

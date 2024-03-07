@@ -77,7 +77,8 @@ def add_diffusion_options(parser):
 def add_model_options(parser):
     group = parser.add_argument_group('model')
     group.add_argument("--arch", default='trans_enc',
-                       choices=['trans_enc', 'trans_dec', 'gru', 'mdm_any', 'mdm_attend', 'mdm_time'], type=str,
+                    #    choices=['trans_enc', 'trans_dec', 'gru', 'mdm_any', 'mdm_attend', 'mdm_time'],
+                        type=str,
                        help="Architecture types as reported in the paper.")
     group.add_argument("--emb_trans_dec", default=False, type=bool,
                        help="For trans_dec architecture only, if true, will inject condition as a class token"
@@ -96,6 +97,7 @@ def add_model_options(parser):
                        help="Model is trained unconditionally. That is, it is constrained by neither text nor action. "
                             "Currently tested on HumanAct12 only.")
     group.add_argument("--window_size", default=-1, type=int, help='use the feature of local attention with a window of that size.')
+    group.add_argument("--second_attention", default=False, type=bool, help='Should the model contain 2 Self Attention layers or not.')
 
 
 
