@@ -199,11 +199,10 @@ class SymetricInjectLayer(TransformerEncoderLayer):
         super().__init__(d_model, nhead, dropout=dropout, batch_first=batch_first,
                           device=device, dtype=dtype, **kwargs)
 
-        factory_kwargs = {'device': device, 'dtype': dtype}
         self.second_attention = second_attention
         if second_attention:
             self.self_attn2 = MultiheadAttention(d_model, nhead, dropout=dropout,
-                                                batch_first=batch_first, **factory_kwargs)
+                                                batch_first=batch_first, device=device, dtype=dtype)
 
     def forward(self, src: Tensor, inject: Tensor, src_mask: Optional[Tensor] = None,
                 src_key_padding_mask: Optional[Tensor] = None) -> Tensor:

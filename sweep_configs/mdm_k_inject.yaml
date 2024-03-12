@@ -1,5 +1,6 @@
 program: train/train_mdm.py
 name: k_inject
+method: grid
 metric:
   goal: minimize
   name: score

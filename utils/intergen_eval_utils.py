@@ -66,7 +66,7 @@ class EvaluationDataset(Dataset):
                 batch["motion_lens"] = motion_lens
 
                 motions_output = self.model.forward_test(batch, scale=scale)
-                # motions_output = batch["output"][:, :, :524, ...].reshape(batch["output"].shape[0], batch["output"].shape[1], 2, -1)
+                motions_output = motions_output[:, :, :524, ...].reshape(motions_output.shape[0], motions_output.shape[1], 2, -1)
                 motions_output = self.normalizer.backward(motions_output.cpu().detach().numpy())
 
                 # motions_output[..., :22 * 3] = filters.gaussian_filter1d(motions_output[..., :22 * 3], 1, axis=0, mode='nearest')
