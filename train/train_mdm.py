@@ -38,7 +38,8 @@ def change_args_with_sweep(args, sweep_config: dict, name: str):
         else:
             raise ValueError(f'Invalid key {key} in sweep_config')
     
-    setattr(args, 'save_dir', f'save/{name}')
+    if name is not None:
+        setattr(args, 'save_dir', f'save/{name}')
     # setattr(args, 'num_frames', 100)  # TODO: Remove.
 
     print('##### NEW ARGS #####')

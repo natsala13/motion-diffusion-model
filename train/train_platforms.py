@@ -23,7 +23,7 @@ class TrainPlatform:
     
     @property
     def name(self):
-        return 'no platform'
+        return None
     
 
 

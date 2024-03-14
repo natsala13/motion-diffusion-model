@@ -203,6 +203,8 @@ class SymetricInjectLayer(TransformerEncoderLayer):
         if second_attention:
             self.self_attn2 = MultiheadAttention(d_model, nhead, dropout=dropout,
                                                 batch_first=batch_first, device=device, dtype=dtype)
+            torch.nn.init.zeros_(self.self_attn2.in_proj_weight)
+            torch.nn.init.zeros_(self.self_attn2.out_proj.weight)
 
     def forward(self, src: Tensor, inject: Tensor, src_mask: Optional[Tensor] = None,
                 src_key_padding_mask: Optional[Tensor] = None) -> Tensor:
