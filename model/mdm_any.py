@@ -458,7 +458,8 @@ class MdmSimetric(MdmBase):
 
     def __init__(self, latent_dim=1024, diffusion=None, second_attention=False,
                   clip_dim=512, cond_mask_prob=0.1, ff_size=2048, dropout=0.1,
-                  input_features=263, num_heads=8, num_layers=8, activation="gelu", window_size=-1):
+                  input_features=263, num_heads=8, num_layers=8, activation="gelu",
+                    window_size=-1, zero_in_projection=True, zero_out_projection=True):
 
         super().__init__(latent_dim, diffusion=diffusion,
                           clip_dim=clip_dim, cond_mask_prob=cond_mask_prob,
@@ -473,7 +474,9 @@ class MdmSimetric(MdmBase):
                                                      nhead=num_heads,
                                                      dropout=dropout,
                                                      activation=activation,
-                                                     second_attention=second_attention)
+                                                     second_attention=second_attention,
+                                                     zero_in_projection=zero_in_projection,
+                                                     zero_out_projection=zero_out_projection)
 
         self.model = DoubleInjectTransformerEncoder(attention_layer, num_layers=num_layers)
         self.model.load_state_dict(checkpoint_keys, strict=False)

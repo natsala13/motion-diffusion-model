@@ -6,12 +6,16 @@ metric:
   name: score
 parameters:
   seed:
-    values: [1, 2, 3]
+    values: [10]
   arch:
     values: [mdm_symetric]
   latent_dim:
     values: [1024]
   second_attention:
+    values: [True, False]
+  zero_in_initiaization:
+    values: [True, False]
+  zero_out_initiaization:
     values: [True, False]
   dataset:
     value: interhuman
@@ -23,6 +27,8 @@ parameters:
     value: 96
   eval_during_training:
     value: True
+  save_interval:
+    value: 20000
 command:
   - ${env}
   - ${interpreter}

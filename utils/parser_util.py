@@ -98,6 +98,8 @@ def add_model_options(parser):
                             "Currently tested on HumanAct12 only.")
     group.add_argument("--window_size", default=-1, type=int, help='use the feature of local attention with a window of that size.')
     group.add_argument("--second_attention", default=False, type=bool, help='Should the model contain 2 Self Attention layers or not.')
+    group.add_argument("--zero_in_initiaization", default=True, type=bool, help='Zero the initialization weights')
+    group.add_argument("--zero_out_initiaization", default=True, type=bool, help='Zero the initialization weights')
 
 
 

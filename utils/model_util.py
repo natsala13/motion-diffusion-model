@@ -29,7 +29,10 @@ def create_model_and_diffusion(args, data):
     elif args.arch == 'tedi':
         model = Unet(input_features=262, diffusion=diffusion)
     elif args.arch == 'mdm_symetric':
-        model = MdmSimetric(input_features=262, diffusion=diffusion, second_attention=args.second_attention)
+        model = MdmSimetric(input_features=262, diffusion=diffusion,
+                            second_attention=args.second_attention,
+                            zero_in_projection=args.zero_in_projection,
+                            zero_out_projection=args.zero_out_projection)
     else:
         model = MDM(**get_model_args(args, data), diffusion=diffusion)
 
