@@ -20,7 +20,7 @@ parameters:
   dataset:
     value: interhuman
   batch_size:
-    value: 64
+    value: [32, 64]
   ff_size:
     value: 2048
   eval_batch_size:
