@@ -21,6 +21,50 @@ from data_loaders.interhuman.interhuman import InterGenNormalizer, HumanMlNormal
 import data_loaders.humanml.utils.paramUtil as paramUtil
 
 
+
+def generate_motion(model, diffusion, model_kwargs: dict, n_frames: int, 
+                    guidance_param: int, batch_size: int, device):
+    # add CFG scale to batch
+    print(f'Generating motion using {type(model)} and {type(diffusion)}, for {n_frames} frames')
+    if guidance_param != 1:
+        model_kwargs['y']['scale'] = torch.ones(batch_size, device=device) * guidance_param
+
+    model_kwargs['y'] = {key: val.to(device) if torch.is_tensor(val) else val 
+                         for key, val in model_kwargs['y'].items()}
+
+    sample = diffusion.p_sample_loop(
+        model,
+        (batch_size, model.njoints, model.nfeats, n_frames),  # BUG FIX
+        clip_denoised=False,
+        model_kwargs=model_kwargs,
+        skip_timesteps=0,  # 0 is the default value - i.e. don't skip any step
+        init_image=None,
+        progress=True,
+        dump_steps=None,
+        noise=None,
+        const_noise=False,
+    )
+
+    return sample
+
+def denormalize_motion(sample, normalizer, batch_size: int, n_frames: int, data_rep: str):
+    # Recover XYZ *positions* from HumanML3D vector representation
+    if data_rep == 'hml_vec':
+        n_joints = 22 if sample.shape[1] == 263 else 21
+        # sample = data.dataset.t2m_dataset.inv_transform(sample.cpu().permute(0, 2, 3, 1)).float()
+        sample = normalizer.backward(sample.cpu().permute(0, 2, 3, 1)).float()
+        sample = recover_from_ric(sample, n_joints)
+        sample = sample.view(-1, *sample.shape[2:]).permute(0, 2, 3, 1)  # torch.Size([1, 22, 3, 196])
+    elif 'interhuman' in data_rep:
+        n_joints = 22
+        xyz_features = 3
+        number_of_motions = 1 if 'solo' in data_rep else 2
+        sample = sample[:, :524].reshape(batch_size, number_of_motions, -1, n_frames)
+        sample = normalizer.backward(sample.cpu().permute(0, 1, 3, 2))
+        sample = sample.permute(0, 1, 3, 2)[..., :n_joints * xyz_features, :]
+
+    return sample, n_joints, xyz_features
+
 def main():
     args = generate_args()
     fixseed(args.seed)
@@ -110,39 +154,9 @@ def main():
     for rep_i in range(args.num_repetitions):
         print(f'### Sampling [repetitions #{rep_i}]')
 
-        # add CFG scale to batch
-        if args.guidance_param != 1:
-            model_kwargs['y']['scale'] = torch.ones(args.batch_size, device=dist_util.dev()) * args.guidance_param
-        model_kwargs['y'] = {key: val.to(dist_util.dev()) if torch.is_tensor(val) else val for key, val in model_kwargs['y'].items()}
-
-        sample = diffusion.p_sample_loop(
-            model,
-            (args.batch_size, model.njoints, model.nfeats, n_frames),  # BUG FIX
-            clip_denoised=False,
-            model_kwargs=model_kwargs,
-            skip_timesteps=0,  # 0 is the default value - i.e. don't skip any step
-            init_image=None,
-            progress=True,
-            dump_steps=None,
-            noise=None,
-            const_noise=False,
-        )
-
-        # Recover XYZ *positions* from HumanML3D vector representation
-        if model.data_rep == 'hml_vec':
-            n_joints = 22 if sample.shape[1] == 263 else 21
-            # sample = data.dataset.t2m_dataset.inv_transform(sample.cpu().permute(0, 2, 3, 1)).float()
-            sample = normalizer.backward(sample.cpu().permute(0, 2, 3, 1)).float()
-            sample = recover_from_ric(sample, n_joints)
-            sample = sample.view(-1, *sample.shape[2:]).permute(0, 2, 3, 1)  # torch.Size([1, 22, 3, 196])
-        elif 'interhuman' in model.data_rep:
-            n_joints = 22
-            xyz_features = 3
-            number_of_motions = 1 if 'solo' in model.data_rep else 2
-            sample = sample[:, :524].reshape(args.batch_size, number_of_motions, -1, n_frames)
-            sample = normalizer.backward(sample.cpu().permute(0, 1, 3, 2))
-            sample = sample.permute(0, 1, 3, 2)[..., :n_joints * xyz_features, :]
-
+        sample = generate_motion(model, diffusion, model_kwargs, n_frames, args.guidance_param, args.batch_size, dist_util.dev())
+        sample, n_joints, xyz_features = denormalize_motion(sample, normalizer, args.batch_size, n_frames, model.data_rep)
+        
         rot2xyz_pose_rep = 'xyz' if model.data_rep in ['xyz', 'hml_vec', 'interhuman', 'interhuman_solo', 'interhuman any']  else model.data_rep
         rot2xyz_mask = None if rot2xyz_pose_rep == 'xyz' else model_kwargs['y']['mask'].reshape(args.batch_size, n_frames).bool()
         sample = model.rot2xyz(x=sample, mask=rot2xyz_mask, pose_rep=rot2xyz_pose_rep, glob=True, translation=True,

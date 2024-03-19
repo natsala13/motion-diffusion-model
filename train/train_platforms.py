@@ -76,7 +76,12 @@ class WandBPlatform(TrainPlatform):
 
     def report_scalar(self, name, value, iteration, group_name=None):
         wandb.log({name: value}, step=iteration)
-
+    
+    def upload_artifact(self, name: str, file_path: str):
+        artifact = wandb.Artifact(name, type='motion')
+        artifact.add_file(file_path)
+        self.run.log_artifact(artifact)
+    
     def report_args(self, args, name):
         pass
         # api = wandb.Api()
@@ -122,6 +127,11 @@ class WandBSweepPlatform(TrainPlatform):
 
     def report_args(self, args, name):
         pass
+    
+    def upload_artifact(self, name: str, file_path: str):
+        artifact = wandb.Artifact(name, type='motion')
+        artifact.add_file(file_path)
+        self.run.log_artifact(artifact)
 
     def close(self, exit_code: Optional[int]=None):
         wandb.finish(exit_code=exit_code)

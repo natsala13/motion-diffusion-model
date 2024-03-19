@@ -14,6 +14,7 @@ import blobfile as bf
 from tqdm import tqdm
 import torch
 from torch.optim import AdamW
+import einops
 
 from diffusion import logger
 from utils import dist_util
@@ -24,7 +25,10 @@ from data_loaders.humanml.networks.evaluator_wrapper import EvaluatorMDMWrapper
 from eval import eval_humanml, eval_humanact12_uestc, eval_intergen
 from data_loaders.get_data import get_dataset_loader
 from utils.model_util import CosineWarmupScheduler
-
+import data_loaders.humanml.utils.paramUtil as paramUtil
+from sample.generate import generate_motion, denormalize_motion
+from data_loaders.interhuman.interhuman import InterGenNormalizer
+from data_loaders.humanml.utils.plot_script import plot_3d_motion_interaction
 
 # Intergen evaluation imports.
 from torch.utils.data import DataLoader
@@ -134,7 +138,8 @@ class TrainLoop:
                                                 mm_num_repeats=0
                                                 )
                                                 }
-            
+        
+        self.normalizer = InterGenNormalizer()  # For generation
 
 
         self.use_ddp = False
@@ -202,6 +207,7 @@ class TrainLoop:
                     self.save()
                     self.model.eval()
                     self.evaluate()
+                    self.generate()
                     self.model.train()
 
                     # Run for a finite amount of time in integration tests.
@@ -268,6 +274,25 @@ class TrainLoop:
         end_eval = time.time()
         print(f'Evaluation time: {round(end_eval-start_eval)/60}min')
 
+    def generate(self):
+        n_frames = 210
+        motion, cond = next(iter(self.data))
+        caption = cond['y']['text']
+        cond['y']['length'] = torch.tensor([n_frames], device=self.device)
+        cond['y']['mask'] = cond['y']['mask'][..., :n_frames]
+
+        sample = generate_motion(self.model, self.diffusion, cond, n_frames, guidance_param=1, batch_size=1, device=self.device)
+        sample, _, _ = denormalize_motion(sample, self.normalizer, 1, n_frames, 'interhuman')
+
+        sample = self.model.rot2xyz(x=sample, mask=None, pose_rep='xyz', glob=True, translation=True, jointstype='smpl', vertstrans=True, betas=None, beta=0, glob_rot=None, get_rotations_back=False)
+        
+        motion = einops.rearrange(sample[0], 'p (J xyz) t -> p t J xyz', xyz=3)
+        skeleton = paramUtil.t2m_kinematic_chain
+        
+        artifact_name = f'motion_{self.resume_step:09d}'
+        artifact_path = f'{self.save_dir}/{artifact_name}.mp4'
+        plot_3d_motion_interaction(artifact_path, skeleton, motion.numpy(), title=caption[0], fps=20)
+        self.train_platform.upload_artifact(artifact_name, artifact_path)        
 
     def run_step(self, batch, cond):
         self.forward_backward(batch, cond)
