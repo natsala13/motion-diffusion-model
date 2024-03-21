@@ -25,6 +25,9 @@ class TrainPlatform:
     def name(self):
         return None
     
+    def upload_artifact(self, *args, **kwargs):
+        pass
+    
 
 
 class ClearmlPlatform(TrainPlatform):

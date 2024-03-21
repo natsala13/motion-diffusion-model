@@ -277,10 +277,11 @@ class TrainLoop:
     def generate(self):
         n_frames = 210
         motion, cond = next(iter(self.data))
-        caption = cond['y']['text']
+        cond['y']['text'] = cond['y']['text'][:1]
         cond['y']['length'] = torch.tensor([n_frames], device=self.device)
-        cond['y']['mask'] = cond['y']['mask'][..., :n_frames]
+        cond['y']['mask'] = cond['y']['mask'][:1, ..., :n_frames]
 
+        # import ipdb;ipdb.set_trace()
         sample = generate_motion(self.model, self.diffusion, cond, n_frames, guidance_param=1, batch_size=1, device=self.device)
         sample, _, _ = denormalize_motion(sample, self.normalizer, 1, n_frames, 'interhuman')
 
@@ -291,6 +292,7 @@ class TrainLoop:
         
         artifact_name = f'motion_{self.resume_step:09d}'
         artifact_path = f'{self.save_dir}/{artifact_name}.mp4'
+        caption = cond['y']['text'][0]
         plot_3d_motion_interaction(artifact_path, skeleton, motion.numpy(), title=caption[0], fps=20)
         self.train_platform.upload_artifact(artifact_name, artifact_path)        
 

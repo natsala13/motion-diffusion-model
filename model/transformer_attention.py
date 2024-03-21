@@ -256,7 +256,4 @@ class DoubleInjectTransformerEncoder(TransformerEncoder):
 
             embeding_a = embeding
 
-        # if self.norm is not None:
-        #     output = self.norm(output)
-
         return embeding_a, embeding_b
